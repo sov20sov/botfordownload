@@ -192,7 +192,6 @@ class SocialMediaDownloader:
         self.ydl_opts_video = {
             'format': 'best[ext=mp4]/best',
             'outtmpl': f'{DOWNLOAD_FOLDER}/%(title)s.%(ext)s',
-            'ffmpeg_location': '/nix/store',
             'quiet': False,
             'no_warnings': False,
             'nocheckcertificate': True,
@@ -204,7 +203,6 @@ class SocialMediaDownloader:
         self.ydl_opts_audio = {
             'format': 'bestaudio/best',
             'outtmpl': f'{DOWNLOAD_FOLDER}/%(title)s.%(ext)s',
-            'ffmpeg_location': '/nix/store',
             'postprocessors': [{
                 'key': 'FFmpegExtractAudio',
                 'preferredcodec': 'mp3',
