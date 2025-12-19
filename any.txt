@@ -1,0 +1,1604 @@
+venv\Scripts\activate
+
+import os
+import logging
+import requests
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes, CallbackQueryHandler
+from telegram.error import TelegramError
+import yt_dlp
+import asyncio
+from dotenv import load_dotenv
+import re
+import subprocess
+import glob
+import json
+from datetime import datetime
+
+# تحميل المتغيرات من ملف .env
+load_dotenv()
+
+# إعداد نظام السجلات
+logging.basicConfig(
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    level=logging.INFO
+)
+logger = logging.getLogger(__name__)
+
+# جلب التوكن من ملف .env
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+
+# التحقق من وجود التوكن
+if not TELEGRAM_BOT_TOKEN:
+    logger.error("❌ خطأ: لم يتم العثور على TELEGRAM_BOT_TOKEN في ملف .env")
+    exit(1)
+
+# معرف القناة المطلوب الاشتراك بها (بدون @)
+REQUIRED_CHANNEL = os.getenv("REQUIRED_CHANNEL", "sakerrr77")
+CHANNEL_LINK = os.getenv("CHANNEL_LINK", "https://t.me/sakerrr77")
+
+# مجلد مؤقت للتحميلات
+DOWNLOAD_FOLDER = "downloads"
+os.makedirs(DOWNLOAD_FOLDER, exist_ok=True)
+
+# ملف الإحصائيات
+STATS_FILE = "bot_stats.json"
+
+# معرف المطور (ضع معرفك هنا)
+DEVELOPER_ID = int(os.getenv("DEVELOPER_ID", "0"))  # ضع معرفك في .env
+
+# تخزين حالة المستخدم (نوع التحميل المطلوب)
+user_states = {}
+# تخزين نتائج البحث
+search_results = {}
+
+# نظام الإحصائيات
+class BotStats:
+    def __init__(self):
+        self.stats_file = STATS_FILE
+        self.load_stats()
+    
+    def load_stats(self):
+        """تحميل الإحصائيات من الملف"""
+        if os.path.exists(self.stats_file):
+            try:
+                with open(self.stats_file, 'r', encoding='utf-8') as f:
+                    self.data = json.load(f)
+            except:
+                self.data = self.create_new_stats()
+        else:
+            self.data = self.create_new_stats()
+    
+    def create_new_stats(self):
+        """إنشاء إحصائيات جديدة"""
+        return {
+            'total_users': 0,
+            'users': {},  # {user_id: {name, username, first_seen, last_seen, usage_count}}
+            'total_downloads': 0,
+            'downloads_by_type': {
+                'image': 0,
+                'video': 0,
+                'audio': 0,
+                'search': 0
+            },
+            'total_searches': 0,
+            'failed_downloads': 0,
+            'start_date': datetime.now().isoformat()
+        }
+    
+    def save_stats(self):
+        """حفظ الإحصائيات إلى الملف"""
+        try:
+            with open(self.stats_file, 'w', encoding='utf-8') as f:
+                json.dump(self.data, f, ensure_ascii=False, indent=2)
+        except Exception as e:
+            logger.error(f"خطأ في حفظ الإحصائيات: {e}")
+    
+    def add_user(self, user_id, name, username):
+        """إضافة مستخدم جديد"""
+        user_id_str = str(user_id)
+        now = datetime.now().isoformat()
+        
+        if user_id_str not in self.data['users']:
+            self.data['total_users'] += 1
+            self.data['users'][user_id_str] = {
+                'name': name,
+                'username': username,
+                'first_seen': now,
+                'last_seen': now,
+                'usage_count': 1
+            }
+        else:
+            self.data['users'][user_id_str]['last_seen'] = now
+            self.data['users'][user_id_str]['usage_count'] += 1
+        
+        self.save_stats()
+    
+    def add_download(self, download_type):
+        """تسجيل تحميل"""
+        self.data['total_downloads'] += 1
+        if download_type in self.data['downloads_by_type']:
+            self.data['downloads_by_type'][download_type] += 1
+        self.save_stats()
+    
+    def add_search(self):
+        """تسجيل بحث"""
+        self.data['total_searches'] += 1
+        self.save_stats()
+    
+    def add_failed_download(self):
+        """تسجيل تحميل فاشل"""
+        self.data['failed_downloads'] += 1
+        self.save_stats()
+    
+    def get_stats_text(self):
+        """الحصول على نص الإحصائيات"""
+        # حساب المستخدمين النشطين (استخدموا البوت في آخر 24 ساعة)
+        from datetime import datetime, timedelta
+        now = datetime.now()
+        active_users = 0
+        
+        for user_data in self.data['users'].values():
+            last_seen = datetime.fromisoformat(user_data['last_seen'])
+            if (now - last_seen).days == 0:
+                active_users += 1
+        
+        # أكثر المستخدمين نشاطاً
+        top_users = sorted(
+            self.data['users'].items(),
+            key=lambda x: x[1]['usage_count'],
+            reverse=True
+        )[:5]
+        
+        top_users_text = "\n".join([
+            f"  {i+1}. {user[1]['name']} (@{user[1]['username']}) - {user[1]['usage_count']} استخدام"
+            for i, user in enumerate(top_users)
+        ])
+        
+        stats_text = f"""
+📊 إحصائيات البوت الشاملة
+
+👥 المستخدمين:
+• إجمالي المستخدمين: {self.data['total_users']}
+• المستخدمين النشطين اليوم: {active_users}
+
+📥 التحميلات:
+• إجمالي التحميلات: {self.data['total_downloads']}
+  - صور: {self.data['downloads_by_type']['image']}
+  - فيديوهات: {self.data['downloads_by_type']['video']}
+  - موسيقى: {self.data['downloads_by_type']['audio']}
+  - أغاني (بحث): {self.data['downloads_by_type']['search']}
+
+🔍 البحث:
+• إجمالي عمليات البحث: {self.data['total_searches']}
+
+❌ الفشل:
+• التحميلات الفاشلة: {self.data['failed_downloads']}
+
+🏆 أكثر المستخدمين نشاطاً:
+{top_users_text if top_users_text else "  لا يوجد"}
+
+📅 تاريخ البدء: {self.data['start_date'][:10]}
+        """
+        
+        return stats_text
+
+# إنشاء كائن الإحصائيات
+stats = BotStats()
+
+class SocialMediaDownloader:
+    """فئة لتحميل المحتوى من مواقع التواصل الاجتماعي"""
+    
+    def __init__(self):
+        # إعدادات تحميل الفيديو
+        self.ydl_opts_video = {
+            'format': 'best[ext=mp4]/best',
+            'outtmpl': f'{DOWNLOAD_FOLDER}/%(title)s.%(ext)s',
+            'quiet': False,
+            'no_warnings': False,
+            'nocheckcertificate': True,
+            'prefer_ffmpeg': True,
+            'merge_output_format': 'mp4',
+        }
+        
+        # إعدادات تحميل الصوت
+        self.ydl_opts_audio = {
+            'format': 'bestaudio/best',
+            'outtmpl': f'{DOWNLOAD_FOLDER}/%(title)s.%(ext)s',
+            'postprocessors': [{
+                'key': 'FFmpegExtractAudio',
+                'preferredcodec': 'mp3',
+                'preferredquality': '192',
+            }],
+            'quiet': False,
+            'nocheckcertificate': True,
+        }
+    
+    def download_image(self, url):
+        """تحميل صورة من الرابط - مع طرق متعددة"""
+        logger.info(f"محاولة تحميل صورة من: {url}")
+        
+        # الطريقة 1: Instagram أو أي موقع - Web Scraping
+        try:
+            logger.info("استخدام Web Scraping...")
+            return self._download_with_scraping(url)
+        except Exception as e:
+            logger.warning(f"فشل Web Scraping: {e}")
+        
+        # الطريقة 2: تحميل مباشر (للروابط المباشرة)
+        try:
+            logger.info("محاولة التحميل المباشر...")
+            return self._download_direct(url)
+        except Exception as e:
+            logger.warning(f"فشل التحميل المباشر: {e}")
+        
+        # إذا فشلت كل الطرق
+        logger.error("فشلت جميع الطرق")
+        raise Exception("فشل تحميل الصورة. تأكد من أن الرابط يحتوي على صورة عامة")
+    
+    def _download_instagram_image(self, url):
+        """تحميل صورة Instagram باستخدام Web Scraping المتقدم"""
+        try:
+            logger.info("استخدام Web Scraping لـ Instagram...")
+            
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+                'Accept-Language': 'en-US,en;q=0.5',
+                'Accept-Encoding': 'gzip, deflate, br',
+                'Connection': 'keep-alive',
+                'Upgrade-Insecure-Requests': '1',
+                'Sec-Fetch-Dest': 'document',
+                'Sec-Fetch-Mode': 'navigate',
+                'Sec-Fetch-Site': 'none',
+                'Cache-Control': 'max-age=0',
+            }
+            
+            # جلب الصفحة
+            logger.info(f"جلب صفحة: {url}")
+            response = requests.get(url, headers=headers, timeout=30)
+            response.raise_for_status()
+            html = response.text
+            
+            logger.info(f"تم جلب {len(html)} حرف من HTML")
+            
+            # البحث عن روابط الصور في HTML
+            image_patterns = [
+                r'"display_url":"(https://[^"]+)"',  # Instagram display_url
+                r'"display_src":"(https://[^"]+)"',  # بديل
+                r'property="og:image" content="([^"]+)"',  # Open Graph
+                r'"thumbnail_src":"(https://[^"]+)"',  # thumbnail
+            ]
+            
+            image_url = None
+            for pattern in image_patterns:
+                matches = re.findall(pattern, html)
+                if matches:
+                    logger.info(f"وجدت {len(matches)} تطابقات للنمط")
+                    # أخذ أول رابط يحتوي على cdninstagram (صور Instagram الأصلية)
+                    for match in matches:
+                        if 'cdninstagram' in match or 'fbcdn' in match:
+                            image_url = match.replace('\\u0026', '&').replace('\\/', '/')
+                            logger.info(f"وجدت رابط صورة: {image_url[:100]}...")
+                            break
+                    if image_url:
+                        break
+            
+            if not image_url:
+                raise Exception("لم يتم العثور على رابط الصورة في الصفحة")
+            
+            # تحميل الصورة
+            logger.info("تحميل الصورة...")
+            img_response = requests.get(image_url, headers=headers, timeout=30)
+            img_response.raise_for_status()
+            
+            logger.info(f"تم تحميل {len(img_response.content)} بايت")
+            
+            if len(img_response.content) == 0:
+                raise Exception("محتوى الصورة فارغ")
+            
+            # حفظ الصورة
+            filename = f"{DOWNLOAD_FOLDER}/instagram_{os.urandom(4).hex()}.jpg"
+            
+            with open(filename, 'wb') as f:
+                f.write(img_response.content)
+            
+            # التحقق من الحفظ
+            if os.path.exists(filename):
+                file_size = os.path.getsize(filename)
+                logger.info(f"تم حفظ الصورة: {filename} ({file_size} بايت)")
+                
+                if file_size > 0:
+                    return filename, "Instagram Image"
+                else:
+                    raise Exception("الملف المحفوظ فارغ")
+            else:
+                raise Exception("فشل حفظ الملف")
+            
+        except Exception as e:
+            logger.error(f"خطأ في _download_instagram_image: {e}")
+            raise Exception(f"فشل تحميل صورة Instagram: {str(e)}")
+    
+    def _download_with_gallery_dl(self, url):
+        """تحميل صورة باستخدام gallery-dl"""
+        try:
+            logger.info("محاولة التحميل باستخدام gallery-dl")
+            
+            cmd = [
+                'gallery-dl',
+                '--no-video',
+                '-d', DOWNLOAD_FOLDER,
+                url
+            ]
+            
+            logger.info(f"تنفيذ الأمر: {' '.join(cmd)}")
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+            
+            logger.info(f"gallery-dl stdout: {result.stdout}")
+            logger.info(f"gallery-dl stderr: {result.stderr}")
+            
+            if result.returncode != 0:
+                raise Exception(f"gallery-dl error code {result.returncode}")
+            
+            # البحث عن آخر ملف صورة تم تحميله
+            image_extensions = ['.jpg', '.jpeg', '.png', '.webp', '.gif']
+            all_files = []
+            
+            for ext in image_extensions:
+                all_files.extend(glob.glob(f"{DOWNLOAD_FOLDER}/*{ext}"))
+            
+            logger.info(f"ملفات الصور الموجودة: {all_files}")
+            
+            if all_files:
+                latest_file = max(all_files, key=os.path.getctime)
+                title = os.path.splitext(os.path.basename(latest_file))[0]
+                logger.info(f"تم العثور على الصورة: {latest_file}")
+                return latest_file, title
+            
+            raise Exception("لم يتم العثور على صورة محملة")
+            
+        except FileNotFoundError:
+            raise Exception("gallery-dl غير مثبت. نفذ: pip install gallery-dl")
+        except subprocess.TimeoutExpired:
+            raise Exception("انتهت مهلة التحميل")
+        except Exception as e:
+            logger.error(f"خطأ في _download_with_gallery_dl: {e}")
+            raise Exception(f"خطأ في gallery-dl: {str(e)}")
+    
+    def _download_image_ytdlp(self, url):
+        """تحميل صورة باستخدام yt-dlp (للصور فقط)"""
+        opts = {
+            'format': 'best',
+            'outtmpl': f'{DOWNLOAD_FOLDER}/%(id)s.%(ext)s',
+            'quiet': True,
+            'no_warnings': True,
+            'nocheckcertificate': True,
+        }
+        
+        with yt_dlp.YoutubeDL(opts) as ydl:
+            info = ydl.extract_info(url, download=False)
+            
+            if not info:
+                raise Exception("لم يتم العثور على معلومات")
+            
+            # محاولة الحصول على رابط الصورة
+            image_url = None
+            
+            if 'url' in info and info['url']:
+                image_url = info['url']
+            elif 'thumbnails' in info and info['thumbnails']:
+                thumbnails = sorted(info['thumbnails'], 
+                                  key=lambda x: (x.get('width', 0) * x.get('height', 0)), 
+                                  reverse=True)
+                image_url = thumbnails[0]['url']
+            elif 'thumbnail' in info and info['thumbnail']:
+                image_url = info['thumbnail']
+            
+            if not image_url:
+                raise Exception("لم يتم العثور على رابط صورة")
+            
+            # تحميل من الرابط
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+            }
+            
+            response = requests.get(image_url, headers=headers, timeout=30)
+            response.raise_for_status()
+            
+            # تحديد الامتداد
+            content_type = response.headers.get('content-type', '').lower()
+            if 'jpeg' in content_type or 'jpg' in content_type:
+                ext = 'jpg'
+            elif 'png' in content_type:
+                ext = 'png'
+            elif 'gif' in content_type:
+                ext = 'gif'
+            elif 'webp' in content_type:
+                ext = 'webp'
+            else:
+                ext = 'jpg'
+            
+            title = info.get('title', info.get('id', 'image'))
+            safe_title = "".join(c for c in title if c.isalnum() or c in (' ', '-', '_'))[:50]
+            if not safe_title:
+                safe_title = info.get('id', 'image')
+            
+            filename = f"{DOWNLOAD_FOLDER}/{safe_title}.{ext}"
+            
+            with open(filename, 'wb') as f:
+                f.write(response.content)
+            
+            return filename, title
+    
+    def _download_with_scraping(self, url):
+        """تحميل صورة باستخدام Web Scraping"""
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+            'Accept-Language': 'en-US,en;q=0.5',
+        }
+        
+        try:
+            response = requests.get(url, headers=headers, timeout=30)
+            response.raise_for_status()
+            html = response.text
+            
+            # البحث عن روابط الصور في HTML
+            image_patterns = [
+                r'"display_url":"(https://[^"]+)"',  # Instagram
+                r'property="og:image" content="([^"]+)"',  # Open Graph
+                r'"contentUrl":"(https://[^"]+)"',  # Schema.org
+                r'<img[^>]+src="([^"]+)"[^>]*>',  # IMG tags
+            ]
+            
+            image_url = None
+            for pattern in image_patterns:
+                matches = re.findall(pattern, html)
+                if matches:
+                    # أخذ أول رابط يبدو أنه صورة حقيقية
+                    for match in matches:
+                        if any(ext in match.lower() for ext in ['.jpg', '.jpeg', '.png', '.webp']) or 'fbcdn' in match or 'cdninstagram' in match:
+                            image_url = match.replace('\\u0026', '&')
+                            break
+                    if image_url:
+                        break
+            
+            if not image_url:
+                raise Exception("لم يتم العثور على رابط صورة في الصفحة")
+            
+            logger.info(f"تم العثور على رابط الصورة: {image_url[:100]}...")
+            
+            # تحميل الصورة
+            img_response = requests.get(image_url, headers=headers, timeout=30)
+            img_response.raise_for_status()
+            
+            # حفظ الصورة
+            content_type = img_response.headers.get('content-type', '').lower()
+            if 'jpeg' in content_type or 'jpg' in content_type:
+                ext = 'jpg'
+            elif 'png' in content_type:
+                ext = 'png'
+            elif 'webp' in content_type:
+                ext = 'webp'
+            else:
+                ext = 'jpg'
+            
+            filename = f"{DOWNLOAD_FOLDER}/scraped_image.{ext}"
+            
+            with open(filename, 'wb') as f:
+                f.write(img_response.content)
+            
+            return filename, "صورة"
+            
+        except Exception as e:
+            raise Exception(f"فشل Web Scraping: {str(e)}")
+    
+    def _download_direct(self, url):
+        """تحميل مباشر للروابط المباشرة"""
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+        }
+        
+        response = requests.get(url, headers=headers, timeout=30)
+        response.raise_for_status()
+        
+        # تحديد الامتداد من content-type أو URL
+        content_type = response.headers.get('content-type', '').lower()
+        if 'jpeg' in content_type or 'jpg' in content_type:
+            ext = 'jpg'
+        elif 'png' in content_type:
+            ext = 'png'
+        elif 'gif' in content_type:
+            ext = 'gif'
+        elif 'webp' in content_type:
+            ext = 'webp'
+        elif 'image' in content_type:
+            ext = 'jpg'
+        else:
+            # محاولة من URL
+            ext = url.split('.')[-1].split('?')[0].lower()
+            if ext not in ['jpg', 'jpeg', 'png', 'gif', 'webp']:
+                ext = 'jpg'
+        
+        filename = f"{DOWNLOAD_FOLDER}/direct_image.{ext}"
+        
+        with open(filename, 'wb') as f:
+            f.write(response.content)
+        
+        return filename, "صورة"
+    
+    def download_video(self, url):
+        """تحميل فيديو من الرابط"""
+        try:
+            with yt_dlp.YoutubeDL(self.ydl_opts_video) as ydl:
+                info = ydl.extract_info(url, download=True)
+                filename = ydl.prepare_filename(info)
+                
+                # إذا كان الملف بصيغة غير mp4، تحويله
+                if not filename.endswith('.mp4'):
+                    base = os.path.splitext(filename)[0]
+                    new_filename = f"{base}.mp4"
+                    if os.path.exists(new_filename):
+                        filename = new_filename
+                
+                return filename, info.get('title', 'فيديو')
+        except Exception as e:
+            raise Exception(f"خطأ في تحميل الفيديو: {str(e)}")
+    
+    def download_audio(self, url):
+        """تحميل الصوت من الرابط"""
+        try:
+            with yt_dlp.YoutubeDL(self.ydl_opts_audio) as ydl:
+                info = ydl.extract_info(url, download=True)
+                filename = ydl.prepare_filename(info)
+                audio_filename = filename.rsplit('.', 1)[0] + '.mp3'
+                
+                if not os.path.exists(audio_filename):
+                    base = os.path.splitext(filename)[0]
+                    for ext in ['.mp3', '.m4a', '.opus', '.webm']:
+                        test_file = f"{base}{ext}"
+                        if os.path.exists(test_file):
+                            audio_filename = test_file
+                            break
+                
+                return audio_filename, info.get('title', 'صوت')
+        except Exception as e:
+            raise Exception(f"خطأ في تحميل الصوت: {str(e)}")
+    
+    def get_info(self, url):
+        """الحصول على معلومات مفصلة عن الرابط"""
+        try:
+            opts = {
+                'quiet': True, 
+                'no_warnings': True,
+                'nocheckcertificate': True,
+                'extract_flat': False,
+            }
+            
+            with yt_dlp.YoutubeDL(opts) as ydl:
+                info = ydl.extract_info(url, download=False)
+                
+                if not info:
+                    raise Exception("لم يتم العثور على معلومات")
+                
+                return info
+                
+        except yt_dlp.utils.DownloadError as e:
+            logger.error(f"خطأ yt-dlp: {e}")
+            raise Exception("لا يمكن الوصول إلى هذا المحتوى")
+        except Exception as e:
+            logger.error(f"خطأ عام في get_info: {e}")
+            raise Exception(f"خطأ في جلب المعلومات: {str(e)}")
+    
+    def search_youtube(self, query, max_results=5):
+        """البحث في YouTube عن أغنية"""
+        try:
+            logger.info(f"البحث في YouTube: {query}")
+            
+            ydl_opts = {
+                'quiet': True,
+                'no_warnings': True,
+                'extract_flat': True,
+                'nocheckcertificate': True,
+            }
+            
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                # البحث في YouTube
+                search_query = f"ytsearch{max_results}:{query}"
+                result = ydl.extract_info(search_query, download=False)
+                
+                if not result or 'entries' not in result:
+                    raise Exception("لم يتم العثور على نتائج")
+                
+                videos = []
+                for entry in result['entries']:
+                    if entry:
+                        videos.append({
+                            'id': entry.get('id'),
+                            'title': entry.get('title'),
+                            'url': f"https://www.youtube.com/watch?v={entry.get('id')}",
+                            'duration': entry.get('duration', 0),
+                            'channel': entry.get('uploader', entry.get('channel', 'Unknown'))
+                        })
+                
+                logger.info(f"تم العثور على {len(videos)} نتيجة")
+                return videos
+                
+        except Exception as e:
+            logger.error(f"خطأ في البحث: {e}")
+            raise Exception(f"فشل البحث: {str(e)}")
+        """البحث في YouTube عن أغنية"""
+        try:
+            logger.info(f"البحث في YouTube: {query}")
+            
+            ydl_opts = {
+                'quiet': True,
+                'no_warnings': True,
+                'extract_flat': True,
+                'nocheckcertificate': True,
+            }
+            
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                # البحث في YouTube
+                search_query = f"ytsearch{max_results}:{query}"
+                result = ydl.extract_info(search_query, download=False)
+                
+                if not result or 'entries' not in result:
+                    raise Exception("لم يتم العثور على نتائج")
+                
+                videos = []
+                for entry in result['entries']:
+                    if entry:
+                        videos.append({
+                            'id': entry.get('id'),
+                            'title': entry.get('title'),
+                            'url': f"https://www.youtube.com/watch?v={entry.get('id')}",
+                            'duration': entry.get('duration', 0),
+                            'channel': entry.get('uploader', entry.get('channel', 'Unknown'))
+                        })
+                
+                logger.info(f"تم العثور على {len(videos)} نتيجة")
+                return videos
+                
+        except Exception as e:
+            logger.error(f"خطأ في البحث: {e}")
+            raise Exception(f"فشل البحث: {str(e)}")
+        """الحصول على معلومات مفصلة عن الرابط"""
+        try:
+            opts = {
+                'quiet': True, 
+                'no_warnings': True,
+                'nocheckcertificate': True,
+                'extract_flat': False,
+            }
+            
+            with yt_dlp.YoutubeDL(opts) as ydl:
+                info = ydl.extract_info(url, download=False)
+                
+                if not info:
+                    raise Exception("لم يتم العثور على معلومات")
+                
+                return info
+                
+        except yt_dlp.utils.DownloadError as e:
+            logger.error(f"خطأ yt-dlp: {e}")
+            raise Exception("لا يمكن الوصول إلى هذا المحتوى")
+        except Exception as e:
+            logger.error(f"خطأ عام في get_info: {e}")
+            raise Exception(f"خطأ في جلب المعلومات: {str(e)}")
+
+# إنشاء كائن التحميل
+downloader = SocialMediaDownloader()
+
+async def check_subscription(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
+    """التحقق من اشتراك المستخدم في القناة"""
+    user_id = update.effective_user.id
+    
+    try:
+        member = await context.bot.get_chat_member(chat_id=f"@{REQUIRED_CHANNEL}", user_id=user_id)
+        if member.status in ['creator', 'administrator', 'member']:
+            return True
+        else:
+            return False
+    except TelegramError as e:
+        logger.error(f"خطأ في التحقق من الاشتراك: {e}")
+        return False
+
+async def subscription_required(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """رسالة طلب الاشتراك في القناة"""
+    keyboard = [
+        [InlineKeyboardButton("📢 اشترك في القناة", url=CHANNEL_LINK)],
+        [InlineKeyboardButton("✅ تحققت من الاشتراك", callback_data="check_subscription")]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    message = """
+🔒 للاستفادة من البوت يجب عليك الاشتراك في قناتنا أولاً!
+
+📢 اضغط على الزر أدناه للاشتراك في القناة
+ثم اضغط "✅ تحققت من الاشتراك"
+    """
+    
+    if update.callback_query:
+        await update.callback_query.message.edit_text(message, reply_markup=reply_markup)
+    else:
+        await update.message.reply_text(message, reply_markup=reply_markup)
+
+async def check_subscription_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """معالج التحقق من الاشتراك عبر الزر"""
+    query = update.callback_query
+    await query.answer()
+    
+    if await check_subscription(update, context):
+        await query.message.edit_text("✅ رائع! أنت مشترك في القناة\nيمكنك الآن استخدام البوت 🎉\n\nأرسل /start لبدء الاستخدام")
+    else:
+        await subscription_required(update, context)
+
+def get_type_selection_keyboard():
+    """إنشاء لوحة مفاتيح اختيار نوع المحتوى"""
+    keyboard = [
+        [
+            InlineKeyboardButton("🎬 فيديو", callback_data="type_video")
+        ],
+        [
+            InlineKeyboardButton("🎵 موسيقى", callback_data="type_audio"),
+            InlineKeyboardButton("📊 معلومات", callback_data="type_info")
+        ],
+        [
+            InlineKeyboardButton("🔍 بحث أغنية", callback_data="type_search")
+        ]
+    ]
+    return InlineKeyboardMarkup(keyboard)
+
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """رسالة الترحيب مع أزرار الاختيار"""
+    if not await check_subscription(update, context):
+        await subscription_required(update, context)
+        return
+    
+    # تسجيل المستخدم
+    user = update.effective_user
+    stats.add_user(user.id, user.full_name, user.username or "بدون معرف")
+    
+    welcome_message = """ 
+
+🎉 أهلاً وسهلاً بك في بوت تحميل المحتوى من مواقع التواصل الاجتماعي! 👋
+مع هذا البوت يمكنك بسهولة تنزيل كل ما تحتاجه من صور، فيديوهات، موسيقى، بالإضافة إلى عرض المعلومات الخاصة بالمحتوى.
+
+📥 ما الذي يمكنك تحميله؟
+
+🎥 الفيديوهات
+🎵 الموسيقى
+🖼 الصور (سيتم تفعيلها قريبًا بعد انتهاء الصيانة)
+
+🌐 المنصات المدعومة
+
+YouTube – Instagram – TikTok – Facebook – Twitter/X – Pinterest – SoundCloud
+والمزيد من المنصات الأخرى!
+
+📝 كيفية الاستخدام
+
+1️⃣ أرسل رابط الفيديو أو موسيقى مباشرة ليتم تحميلها
+2️⃣ أو استخدم الاموامر
+
+/video [رابط] لتحميل فيديو
+
+/audio [رابط] لتحميل موسيقى فقط
+
+/info [رابط] لعرض معلومات المحتوى
+
+/search [اسم الأغنية] للبحث عن أغنية
+
+🔗 تم تطوير البوت بواسطة إدارة قناة ساخر | عالم برشلونة
+
+✨ استمتع بتجربتك! 😄
+
+    """
+    
+    await update.message.reply_text(
+        welcome_message,
+        reply_markup=get_type_selection_keyboard()
+    )
+
+async def type_selection_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """معالج اختيار نوع المحتوى من الأزرار"""
+    query = update.callback_query
+    await query.answer()
+    
+    user_id = update.effective_user.id
+    download_type = query.data.replace("type_", "")
+    
+    # حفظ اختيار المستخدم
+    user_states[user_id] = download_type
+    
+    type_emoji = {
+        'image': '📸',
+        'video': '🎬',
+        'audio': '🎵',
+        'info': '📊',
+        'search': '🔍'
+    }
+    
+    type_name = {
+        'image': 'صورة',
+        'video': 'فيديو',
+        'audio': 'موسيقى',
+        'info': 'معلومات',
+        'search': 'بحث أغنية'
+    }
+    
+    if download_type == 'search':
+        await query.message.edit_text(
+            f"{type_emoji[download_type]} {type_name[download_type]}\n\n"
+            f"أرسل اسم الأغنية التي تريد البحث عنها...\n\n"
+            f"مثال: Imagine Dragons Believer\n\n"
+            f"💡 أو اختر نوع آخر:",
+            reply_markup=get_type_selection_keyboard()
+        )
+    else:
+        await query.message.edit_text(
+            f"{type_emoji[download_type]} تم اختيار: {type_name[download_type]}\n\n"
+            f"الآن أرسل الرابط...\n\n"
+            f"💡 أو اختر نوع آخر:",
+            reply_markup=get_type_selection_keyboard()
+        )
+
+async def image_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """تحميل صورة مباشرة"""
+    if not await check_subscription(update, context):
+        await subscription_required(update, context)
+        return
+    
+    if not context.args:
+        await update.message.reply_text("⚠️ الرجاء إرسال رابط مع الأمر\nمثال: /image https://instagram.com/...")
+        return
+    
+    url = context.args[0]
+    await download_image_handler(update, context, url)
+
+async def video_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """تحميل فيديو مباشرة"""
+    if not await check_subscription(update, context):
+        await subscription_required(update, context)
+        return
+    
+    if not context.args:
+        await update.message.reply_text("⚠️ الرجاء إرسال رابط مع الأمر\nمثال: /video https://tiktok.com/...")
+        return
+    
+    url = context.args[0]
+    await download_video_handler(update, context, url)
+
+async def audio_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """تحميل موسيقى مباشرة"""
+    if not await check_subscription(update, context):
+        await subscription_required(update, context)
+        return
+    
+    if not context.args:
+        await update.message.reply_text("⚠️ الرجاء إرسال رابط مع الأمر\nمثال: /audio https://youtube.com/...")
+        return
+    
+    url = context.args[0]
+    message = await update.message.reply_text("🎵 جاري تحميل الموسيقى...")
+    
+    try:
+        filename, title = downloader.download_audio(url)
+        
+        await message.edit_text("📤 جاري إرسال الملف...")
+        
+        with open(filename, 'rb') as audio_file:
+            await update.message.reply_audio(
+                audio=audio_file,
+                title=title,
+                caption=f"🎵 {title}"
+            )
+        
+        os.remove(filename)
+        await message.delete()
+        
+    except Exception as e:
+        await message.edit_text(f"❌ خطأ: {str(e)}")
+
+async def info_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """عرض معلومات مفصلة"""
+    if not await check_subscription(update, context):
+        await subscription_required(update, context)
+        return
+    
+    if not context.args:
+        await update.message.reply_text("⚠️ الرجاء إرسال رابط مع الأمر\nمثال: /info https://youtube.com/...")
+        return
+    
+    url = context.args[0]
+    message = await update.message.reply_text("🔍 جاري جلب المعلومات...")
+    
+    try:
+        info = downloader.get_info(url)
+        
+        if not info:
+            await message.edit_text("❌ لم يتم العثور على معلومات")
+            return
+        
+        title = info.get('title', info.get('webpage_title', 'غير متوفر'))
+        uploader = info.get('uploader', info.get('channel', info.get('creator', 'غير متوفر')))
+        duration = info.get('duration', 0)
+        view_count = info.get('view_count', 0)
+        like_count = info.get('like_count', 0)
+        
+        if duration and duration > 0:
+            hours = duration // 3600
+            minutes = (duration % 3600) // 60
+            seconds = duration % 60
+            if hours > 0:
+                duration_str = f"{hours}:{minutes:02d}:{seconds:02d}"
+            else:
+                duration_str = f"{minutes}:{seconds:02d}"
+        else:
+            duration_str = "غير متوفر"
+        
+        view_str = f"{view_count:,}" if view_count else "غير متوفر"
+        like_str = f"{like_count:,}" if like_count else "غير متوفر"
+        
+        info_text = f"""
+📊 معلومات المحتوى:
+
+📌 العنوان: {title}
+
+👤 الناشر: {uploader}
+
+⏱️ المدة: {duration_str}
+
+👁️ المشاهدات: {view_str}
+❤️ الإعجابات: {like_str}
+        """
+        
+        await message.edit_text(info_text)
+        
+    except Exception as e:
+        await message.edit_text(f"❌ خطأ: {str(e)}")
+
+async def search_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """البحث عن أغنية في YouTube"""
+    if not await check_subscription(update, context):
+        await subscription_required(update, context)
+        return
+    
+    if not context.args:
+        await update.message.reply_text(
+            "⚠️ الرجاء كتابة اسم الأغنية بعد الأمر\n"
+            "مثال: /search Imagine Dragons Believer"
+        )
+        return
+    
+    query = ' '.join(context.args)
+    message = await update.message.reply_text(f"🔍 جاري البحث عن: {query}...")
+    
+    # تسجيل البحث
+    stats.add_search()
+    
+    try:
+        results = downloader.search_youtube(query, max_results=5)
+        
+        if not results:
+            await message.edit_text("❌ لم يتم العثور على نتائج")
+            return
+        
+        # حفظ النتائج
+        user_id = update.effective_user.id
+        search_results[user_id] = results
+        
+        # إنشاء الأزرار
+        keyboard = []
+        for i, video in enumerate(results):
+            duration = video['duration']
+            if duration and duration > 0:
+                minutes = int(duration) // 60
+                seconds = int(duration) % 60
+                duration_str = f"{minutes}:{seconds:02d}"
+            else:
+                duration_str = "?"
+            
+            button_text = f"🎵 {video['title'][:45]}... ({duration_str})"
+            keyboard.append([InlineKeyboardButton(
+                button_text, 
+                callback_data=f"download_song_{i}"
+            )])
+        
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        await message.edit_text(
+            f"🎵 نتائج البحث عن: {query}\n\n"
+            f"اختر الأغنية التي تريد تحميلها:",
+            reply_markup=reply_markup
+        )
+        
+    except Exception as e:
+        await message.edit_text(f"❌ خطأ في البحث: {str(e)}")
+        logger.error(f"خطأ في search_command: {e}")
+
+async def download_song_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """تحميل الأغنية المختارة"""
+    query = update.callback_query
+    await query.answer()
+    
+    user_id = update.effective_user.id
+    
+    # التحقق من وجود نتائج البحث
+    if user_id not in search_results:
+        await query.message.edit_text("❌ انتهت صلاحية البحث. الرجاء البحث مرة أخرى")
+        return
+    
+    # الحصول على رقم الأغنية
+    try:
+        song_index = int(query.data.split('_')[-1])
+        video = search_results[user_id][song_index]
+    except (IndexError, ValueError):
+        await query.message.edit_text("❌ خطأ في اختيار الأغنية")
+        return
+    
+    await query.message.edit_text(f"🎵 جاري تحميل: {video['title'][:50]}...")
+    
+    try:
+        # تحميل الأغنية
+        filename, title = downloader.download_audio(video['url'])
+        
+        # تسجيل التحميل الناجح
+        stats.add_download('search')
+        
+        await query.message.edit_text("📤 جاري إرسال الأغنية...")
+        
+        # إرسال كملف صوتي
+        with open(filename, 'rb') as audio_file:
+            await query.message.reply_audio(
+                audio=audio_file,
+                title=title,
+                performer=video['channel'],
+                caption=f"🎵 {title}\n👤 {video['channel']}"
+            )
+        
+        # حذف الملف المؤقت
+        os.remove(filename)
+        await query.message.delete()
+        
+        # حذف نتائج البحث
+        if user_id in search_results:
+            del search_results[user_id]
+        
+    except Exception as e:
+        stats.add_failed_download()
+        await query.message.edit_text(f"❌ خطأ في التحميل: {str(e)}")
+        logger.error(f"خطأ في download_song_callback: {e}")
+    """البحث عن أغنية في YouTube"""
+    if not await check_subscription(update, context):
+        await subscription_required(update, context)
+        return
+    
+    if not context.args:
+        await update.message.reply_text(
+            "⚠️ الرجاء كتابة اسم الأغنية بعد الأمر\n"
+            "مثال: /search Imagine Dragons Believer"
+        )
+        return
+    
+    query = ' '.join(context.args)
+    message = await update.message.reply_text(f"🔍 جاري البحث عن: {query}...")
+    
+    try:
+        results = downloader.search_youtube(query, max_results=5)
+        
+        if not results:
+            await message.edit_text("❌ لم يتم العثور على نتائج")
+            return
+        
+        # حفظ النتائج
+        user_id = update.effective_user.id
+        search_results[user_id] = results
+        
+        # إنشاء الأزرار
+        keyboard = []
+        for i, video in enumerate(results):
+            duration = video['duration']
+            minutes = duration // 60
+            seconds = duration % 60
+            duration_str = f"{minutes}:{seconds:02d}" if duration else "?"
+            
+            button_text = f"🎵 {video['title'][:45]}... ({duration_str})"
+            keyboard.append([InlineKeyboardButton(
+                button_text, 
+                callback_data=f"download_song_{i}"
+            )])
+        
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        await message.edit_text(
+            f"🎵 نتائج البحث عن: {query}\n\n"
+            f"اختر الأغنية التي تريد تحميلها:",
+            reply_markup=reply_markup
+        )
+        
+    except Exception as e:
+        await message.edit_text(f"❌ خطأ في البحث: {str(e)}")
+        logger.error(f"خطأ في search_command: {e}")
+
+async def download_song_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """تحميل الأغنية المختارة"""
+    query = update.callback_query
+    await query.answer()
+    
+    user_id = update.effective_user.id
+    
+    # التحقق من وجود نتائج البحث
+    if user_id not in search_results:
+        await query.message.edit_text("❌ انتهت صلاحية البحث. الرجاء البحث مرة أخرى")
+        return
+    
+    # الحصول على رقم الأغنية
+    try:
+        song_index = int(query.data.split('_')[-1])
+        video = search_results[user_id][song_index]
+    except (IndexError, ValueError):
+        await query.message.edit_text("❌ خطأ في اختيار الأغنية")
+        return
+    
+    await query.message.edit_text(f"🎵 جاري تحميل: {video['title'][:50]}...")
+    
+    try:
+        # تحميل الأغنية
+        filename, title = downloader.download_audio(video['url'])
+        
+        await query.message.edit_text("📤 جاري إرسال الأغنية...")
+        
+        # إرسال كملف صوتي
+        with open(filename, 'rb') as audio_file:
+            await query.message.reply_audio(
+                audio=audio_file,
+                title=title,
+                performer=video['channel'],
+                caption=f"🎵 {title}\n👤 {video['channel']}"
+            )
+        
+        # حذف الملف المؤقت
+        os.remove(filename)
+        await query.message.delete()
+        
+        # حذف نتائج البحث
+        if user_id in search_results:
+            del search_results[user_id]
+        
+    except Exception as e:
+        await query.message.edit_text(f"❌ خطأ في التحميل: {str(e)}")
+        logger.error(f"خطأ في download_song_callback: {e}")
+    """عرض معلومات مفصلة"""
+    if not await check_subscription(update, context):
+        await subscription_required(update, context)
+        return
+    
+    if not context.args:
+        await update.message.reply_text("⚠️ الرجاء إرسال رابط مع الأمر\nمثال: /info https://youtube.com/...")
+        return
+    
+    url = context.args[0]
+    message = await update.message.reply_text("🔍 جاري جلب المعلومات...")
+    
+    try:
+        info = downloader.get_info(url)
+        
+        if not info:
+            await message.edit_text("❌ لم يتم العثور على معلومات")
+            return
+        
+        title = info.get('title', info.get('webpage_title', 'غير متوفر'))
+        uploader = info.get('uploader', info.get('channel', info.get('creator', 'غير متوفر')))
+        duration = info.get('duration', 0)
+        view_count = info.get('view_count', 0)
+        like_count = info.get('like_count', 0)
+        
+        if duration and duration > 0:
+            hours = duration // 3600
+            minutes = (duration % 3600) // 60
+            seconds = duration % 60
+            if hours > 0:
+                duration_str = f"{hours}:{minutes:02d}:{seconds:02d}"
+            else:
+                duration_str = f"{minutes}:{seconds:02d}"
+        else:
+            duration_str = "غير متوفر"
+        
+        view_str = f"{view_count:,}" if view_count else "غير متوفر"
+        like_str = f"{like_count:,}" if like_count else "غير متوفر"
+        
+        info_text = f"""
+📊 معلومات المحتوى:
+
+📌 العنوان: {title}
+
+👤 الناشر: {uploader}
+
+⏱️ المدة: {duration_str}
+
+👁️ المشاهدات: {view_str}
+❤️ الإعجابات: {like_str}
+        """
+        
+        await message.edit_text(info_text)
+        
+    except Exception as e:
+        await message.edit_text(f"❌ خطأ: {str(e)}")
+
+async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """عرض إحصائيات البوت (للمطور فقط)"""
+    user_id = update.effective_user.id
+    
+    # التحقق من أن المستخدم هو المطور
+    if user_id != DEVELOPER_ID:
+        await update.message.reply_text("⛔ هذا الأمر متاح للمطور فقط")
+        return
+    
+    stats_text = stats.get_stats_text()
+    await update.message.reply_text(stats_text)
+
+async def broadcast_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """إرسال رسالة لجميع المستخدمين (للمطور فقط)"""
+    user_id = update.effective_user.id
+    
+    # التحقق من أن المستخدم هو المطور
+    if user_id != DEVELOPER_ID:
+        await update.message.reply_text("⛔ هذا الأمر متاح للمطور فقط")
+        return
+    
+    if not context.args:
+        await update.message.reply_text(
+            "⚠️ الرجاء كتابة الرسالة بعد الأمر\n"
+            "مثال: /broadcast مرحباً بالجميع!"
+        )
+        return
+    
+    broadcast_text = ' '.join(context.args)
+    message = await update.message.reply_text("📤 جاري إرسال الرسالة...")
+    
+    success_count = 0
+    fail_count = 0
+    
+    for user_id_str in stats.data['users'].keys():
+        try:
+            await context.bot.send_message(
+                chat_id=int(user_id_str),
+                text=f"📢 رسالة من المطور:\n\n{broadcast_text}"
+            )
+            success_count += 1
+        except Exception as e:
+            fail_count += 1
+            logger.error(f"فشل إرسال رسالة إلى {user_id_str}: {e}")
+    
+    await message.edit_text(
+        f"✅ تم إرسال الرسالة\n\n"
+        f"✅ نجح: {success_count}\n"
+        f"❌ فشل: {fail_count}"
+    )
+    """معالج تحميل الصور"""
+    message = await update.message.reply_text("📸 جاري تحميل الصورة...")
+    
+    filename = None
+    try:
+        logger.info(f"=== بدء تحميل الصورة ===")
+        logger.info(f"الرابط: {url}")
+        
+        filename, title = downloader.download_image(url)
+        
+        logger.info(f"اسم الملف: {filename}")
+        logger.info(f"هل الملف موجود: {os.path.exists(filename)}")
+        
+        if not os.path.exists(filename):
+            await message.edit_text("❌ الملف غير موجود")
+            return
+        
+        file_size = os.path.getsize(filename)
+        logger.info(f"حجم الملف: {file_size} بايت ({file_size / (1024*1024):.2f} MB)")
+        
+        if file_size == 0:
+            await message.edit_text("❌ الملف فارغ")
+            os.remove(filename)
+            return
+        
+        if file_size > 10 * 1024 * 1024:
+            await message.edit_text(f"⚠️ الصورة كبيرة جداً ({file_size // (1024*1024)} MB)")
+            os.remove(filename)
+            return
+        
+        # قراءة محتوى الملف
+        logger.info("قراءة محتوى الملف...")
+        with open(filename, 'rb') as f:
+            file_content = f.read()
+        
+        logger.info(f"تم قراءة {len(file_content)} بايت")
+        
+        if len(file_content) == 0:
+            await message.edit_text("❌ محتوى الملف فارغ")
+            os.remove(filename)
+            return
+        
+        # عرض أول 20 بايت للتشخيص
+        logger.info(f"أول 20 بايت: {file_content[:20]}")
+        
+        await message.edit_text("📤 جاري الإرسال...")
+        
+        # محاولة إرسال الصورة بطريقة مباشرة
+        try:
+            # الطريقة 1: إرسال مباشر من المسار
+            logger.info("محاولة الإرسال المباشر...")
+            await update.message.reply_photo(
+                photo=open(filename, 'rb'),
+                caption=f"📸 {title[:200]}"
+            )
+            logger.info("✅ نجح الإرسال المباشر")
+            await message.delete()
+            
+        except Exception as e1:
+            logger.error(f"فشل الإرسال المباشر: {e1}")
+            
+            # الطريقة 2: إرسال من BytesIO
+            try:
+                logger.info("محاولة الإرسال من BytesIO...")
+                from io import BytesIO
+                photo_bytes = BytesIO(file_content)
+                photo_bytes.name = f"image.{filename.split('.')[-1]}"
+                
+                await update.message.reply_photo(
+                    photo=photo_bytes,
+                    caption=f"📸 {title[:200]}"
+                )
+                logger.info("✅ نجح الإرسال من BytesIO")
+                await message.delete()
+                
+            except Exception as e2:
+                logger.error(f"فشل الإرسال من BytesIO: {e2}")
+                
+                # الطريقة 3: إرسال كـ Document
+                try:
+                    logger.info("محاولة الإرسال كـ Document...")
+                    doc_bytes = BytesIO(file_content)
+                    doc_bytes.name = os.path.basename(filename)
+                    
+                    await update.message.reply_document(
+                        document=doc_bytes,
+                        caption=f"📸 {title[:200]}"
+                    )
+                    logger.info("✅ نجح الإرسال كـ Document")
+                    await message.delete()
+                    
+                except Exception as e3:
+                    logger.error(f"فشلت جميع الطرق: {e3}")
+                    await message.edit_text(
+                        f"❌ فشل الإرسال\n"
+                        f"الحجم: {file_size / 1024:.1f} KB\n"
+                        f"الخطأ: {str(e3)[:100]}"
+                    )
+                    return
+        
+        # حذف الملف بعد النجاح
+        try:
+            if os.path.exists(filename):
+                os.remove(filename)
+                logger.info("تم حذف الملف")
+        except Exception as del_err:
+            logger.warning(f"فشل حذف الملف: {del_err}")
+        
+    except Exception as e:
+        error_msg = f"❌ خطأ: {str(e)[:200]}"
+        await message.edit_text(error_msg)
+        logger.error(f"=== خطأ عام ===")
+        logger.error(f"{type(e).__name__}: {str(e)}")
+        import traceback
+        logger.error(traceback.format_exc())
+        
+        # تنظيف
+        if filename and os.path.exists(filename):
+            try:
+                os.remove(filename)
+            except:
+                pass
+
+async def download_video_handler(update: Update, context: ContextTypes.DEFAULT_TYPE, url: str):
+    """معالج تحميل الفيديوهات"""
+    message = await update.message.reply_text("🎬 جاري تحميل الفيديو...")
+    
+    try:
+        filename, title = downloader.download_video(url)
+        
+        file_size = os.path.getsize(filename)
+        max_size = 50 * 1024 * 1024
+        
+        if file_size > max_size:
+            stats.add_failed_download()
+            await message.edit_text(
+                f"⚠️ الملف كبير جداً ({file_size // (1024*1024)} MB)\n"
+                f"الحد الأقصى: 50 MB\n\n"
+                f"💡 جرب: /audio {url}"
+            )
+            os.remove(filename)
+            return
+        
+        await message.edit_text("📤 جاري إرسال الفيديو...")
+        
+        with open(filename, 'rb') as video:
+            await update.message.reply_video(
+                video=video,
+                caption=f"🎬 {title}",
+                supports_streaming=True
+            )
+        
+        stats.add_download('video')
+        os.remove(filename)
+        await message.delete()
+        
+    except Exception as e:
+        stats.add_failed_download()
+        await message.edit_text(f"❌ خطأ: {str(e)}")
+
+async def handle_url(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """معالجة الروابط أو البحث حسب اختيار المستخدم"""
+    if not await check_subscription(update, context):
+        await subscription_required(update, context)
+        return
+    
+    text = update.message.text
+    user_id = update.effective_user.id
+    
+    # إذا كان المستخدم في وضع البحث
+    if user_id in user_states and user_states[user_id] == 'search':
+        # البحث عن الأغنية
+        message = await update.message.reply_text(f"🔍 جاري البحث عن: {text}...")
+        
+        try:
+            results = downloader.search_youtube(text, max_results=5)
+            
+            if not results:
+                await message.edit_text("❌ لم يتم العثور على نتائج")
+                return
+            
+            # حفظ النتائج
+            search_results[user_id] = results
+            
+            # إنشاء الأزرار
+            keyboard = []
+            for i, video in enumerate(results):
+                duration = video['duration']
+                if duration and duration > 0:
+                    minutes = int(duration) // 60
+                    seconds = int(duration) % 60
+                    duration_str = f"{minutes}:{seconds:02d}"
+                else:
+                    duration_str = "?"
+                
+                button_text = f"🎵 {video['title'][:45]}... ({duration_str})"
+                keyboard.append([InlineKeyboardButton(
+                    button_text, 
+                    callback_data=f"download_song_{i}"
+                )])
+            
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            
+            await message.edit_text(
+                f"🎵 نتائج البحث عن: {text}\n\n"
+                f"اختر الأغنية التي تريد تحميلها:",
+                reply_markup=reply_markup
+            )
+            
+        except Exception as e:
+            await message.edit_text(f"❌ خطأ في البحث: {str(e)}")
+            logger.error(f"خطأ في البحث: {e}")
+        
+        return
+    
+    # معالجة الروابط العادية
+    if not text.startswith(('http://', 'https://')):
+        return
+    
+    # التحقق من اختيار المستخدم
+    if user_id not in user_states:
+        await update.message.reply_text(
+            "⚠️ الرجاء اختيار نوع المحتوى أولاً:\n\n"
+            "استخدم /start لعرض الخيارات",
+            reply_markup=get_type_selection_keyboard()
+        )
+        return
+    
+    download_type = user_states[user_id]
+    
+    # تنفيذ حسب النوع المختار
+    if download_type == 'image':
+        await download_image_handler(update, context, text)
+    elif download_type == 'video':
+        await download_video_handler(update, context, text)
+    elif download_type == 'audio':
+        message = await update.message.reply_text("🎵 جاري تحميل الموسيقى...")
+        try:
+            filename, title = downloader.download_audio(text)
+            await message.edit_text("📤 جاري إرسال الملف...")
+            
+            with open(filename, 'rb') as audio_file:
+                await update.message.reply_audio(
+                    audio=audio_file,
+                    title=title,
+                    caption=f"🎵 {title}"
+                )
+            
+            stats.add_download('audio')
+            os.remove(filename)
+            await message.delete()
+        except Exception as e:
+            stats.add_failed_download()
+            await message.edit_text(f"❌ خطأ: {str(e)}")
+    elif download_type == 'info':
+        await info_command(update, context)
+
+async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """رسالة المساعدة"""
+    if not await check_subscription(update, context):
+        await subscription_required(update, context)
+        return
+    
+    help_text = """
+📚 دليل استخدام البوت:
+
+🎯 طريقتان للاستخدام:
+
+1️⃣ الأزرار (سهلة):
+• أرسل /start
+• اختر نوع المحتوى
+• أرسل الرابط أو اسم الأغنية
+
+2️⃣ الأوامر (سريعة):
+/video [رابط] - فيديو
+/audio [رابط] - موسيقى
+/info [رابط] - معلومات
+/search [اسم الأغنية] - بحث أغنية
+
+🎵 ميزة البحث عن الأغاني:
+• اضغط زر "🔍 بحث أغنية"
+• أو استخدم: /search Believer
+• اختر من النتائج
+• احصل على الأغنية مباشرة!
+
+📱 المنصات المدعومة:
+Instagram, TikTok, YouTube, Twitter, Facebook, Pinterest, SoundCloud
+
+💡 نصائح:
+• اختر النوع الصحيح للحصول على أفضل نتيجة
+• للفيديوهات الكبيرة (+50MB)، استخدم /audio
+• البحث يعمل مع جميع أغاني YouTube
+    """
+    
+    await update.message.reply_text(help_text)
+
+def main():
+    """تشغيل البوت"""
+    application = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
+    
+    # معالجات الأزرار
+    application.add_handler(CallbackQueryHandler(check_subscription_callback, pattern="check_subscription"))
+    application.add_handler(CallbackQueryHandler(type_selection_callback, pattern="^type_"))
+    application.add_handler(CallbackQueryHandler(download_song_callback, pattern="^download_song_"))
+    
+    # معالجات الأوامر
+    application.add_handler(CommandHandler("start", start))
+    application.add_handler(CommandHandler("help", help_command))
+    application.add_handler(CommandHandler("image", image_command))
+    application.add_handler(CommandHandler("video", video_command))
+    application.add_handler(CommandHandler("audio", audio_command))
+    application.add_handler(CommandHandler("info", info_command))
+    application.add_handler(CommandHandler("search", search_command))
+    
+    # أوامر المطور
+    application.add_handler(CommandHandler("stats", stats_command))
+    application.add_handler(CommandHandler("broadcast", broadcast_command))
+    
+    # معالج الروابط والنصوص
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_url))
+    
+    logger.info("🚀 البوت يعمل الآن...")
+    application.run_polling(allowed_updates=Update.ALL_TYPES)
+
+if __name__ == '__main__':
+    main()

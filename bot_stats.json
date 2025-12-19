@@ -1,0 +1,36 @@
+{
+  "total_users": 3,
+  "users": {
+    "8032588795": {
+      "name": "𝓢𝓸𝓾𝓵 𝓸𝓯 𝓝𝓪𝓽𝓾𝓻𝓮",
+      "username": "lunix_313",
+      "first_seen": "2025-12-03T03:34:46.806507",
+      "last_seen": "2025-12-19T18:07:24.963168",
+      "usage_count": 8
+    },
+    "5144999281": {
+      "name": "Hussein Mohammed",
+      "username": "husTh1",
+      "first_seen": "2025-12-03T03:35:07.545296",
+      "last_seen": "2025-12-19T18:20:08.922283",
+      "usage_count": 7
+    },
+    "5973476206": {
+      "name": "مجتبى⚡️",
+      "username": "lo9sr",
+      "first_seen": "2025-12-10T14:51:06.032668",
+      "last_seen": "2025-12-10T14:53:08.588908",
+      "usage_count": 2
+    }
+  },
+  "total_downloads": 4,
+  "downloads_by_type": {
+    "image": 0,
+    "video": 4,
+    "audio": 0,
+    "search": 0
+  },
+  "total_searches": 3,
+  "failed_downloads": 4,
+  "start_date": "2025-12-03T03:34:28.935831"
+}
