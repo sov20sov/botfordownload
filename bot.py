@@ -187,30 +187,67 @@ stats = BotStats()
 class SocialMediaDownloader:
     """فئة لتحميل المحتوى من مواقع التواصل الاجتماعي"""
     
+     
+import os
+import logging
+import subprocess
+import glob
+
+# في بداية الملف، أضف هذه الدالة:
+
+def find_ffmpeg():
+    """اكتشاف مسار ffmpeg تلقائياً"""
+    try:
+        # محاولة 1: استخدام which
+        result = subprocess.run(['which', 'ffmpeg'], capture_output=True, text=True, timeout=3)
+        if result.returncode == 0:
+            path = result.stdout.strip()
+            logger.info(f"✅ ffmpeg found: {path}")
+            return path
+    except:
+        pass
+    
+    try:
+        # محاولة 2: البحث في Nix Store
+        nix_paths = glob.glob("/nix/store/*/bin/ffmpeg")
+        if nix_paths:
+            path = nix_paths[0]
+            logger.info(f"✅ ffmpeg found in Nix: {path}")
+            return path
+    except:
+        pass
+    
+    # محاولة 3: المسارات الشائعة
+    for path in ['/usr/bin/ffmpeg', '/usr/local/bin/ffmpeg']:
+        if os.path.exists(path):
+            logger.info(f"✅ ffmpeg found: {path}")
+            return path
+    
+    logger.error("❌ ffmpeg not found!")  
+    return None
+
+
+class SocialMediaDownloader:
+    """فئة لتحميل المحتوى من مواقع التواصل الاجتماعي"""
+    
     def __init__(self):
+        # 🔍 اكتشاف ffmpeg تلقائياً
+        ffmpeg_path = find_ffmpeg()
+        
         # إعدادات تحميل الفيديو
         self.ydl_opts_video = {
             'format': 'best[ext=mp4]/best',
             'outtmpl': f'{DOWNLOAD_FOLDER}/%(title)s.%(ext)s',
             'prefer_ffmpeg': True,
             'merge_output_format': 'mp4',
-
-            # 👇 نفس المسار
-            'ffmpeg_location': '/nix/store/xxxxx-ffmpeg-6.x/bin',
-
             'quiet': False,
             'nocheckcertificate': True,
         }
-
         
         # إعدادات تحميل الصوت
         self.ydl_opts_audio = {
             'format': 'bestaudio/best',
             'outtmpl': f'{DOWNLOAD_FOLDER}/%(title)s.%(ext)s',
-
-            # 👇 استخدم المسار الحقيقي الذي طُبع عندك
-            'ffmpeg_location': '/nix/store/xxxxx-ffmpeg-6.x/bin',
-
             'postprocessors': [{
                 'key': 'FFmpegExtractAudio',
                 'preferredcodec': 'mp3',
@@ -219,7 +256,16 @@ class SocialMediaDownloader:
             'quiet': False,
             'nocheckcertificate': True,
         }
+        
+        # ✅ إضافة مسار ffmpeg تلقائياً
+        if ffmpeg_path:
+            self.ydl_opts_video['ffmpeg_location'] = ffmpeg_path
+            self.ydl_opts_audio['ffmpeg_location'] = ffmpeg_path
+            logger.info(f"🎵 ffmpeg configured successfully")
+        else:
+            logger.warning("⚠️ ffmpeg not found - audio downloads may fail")
 
+    # ... باقي الدوال كما هي
     
     def download_image(self, url):
         """تحميل صورة من الرابط - مع طرق متعددة"""
