@@ -32,8 +32,8 @@ if not TELEGRAM_BOT_TOKEN:
     exit(1)
 
 # معرف القناة المطلوب الاشتراك بها (بدون @)
-REQUIRED_CHANNEL = os.getenv("REQUIRED_CHANNEL", "sakerrr77")
-CHANNEL_LINK = os.getenv("CHANNEL_LINK", "https://t.me/sakerrr77")
+REQUIRED_CHANNEL = os.getenv("REQUIRED_CHANNEL", "forca91")
+CHANNEL_LINK = os.getenv("CHANNEL_LINK", "https://t.me/forca91")
 
 # مجلد مؤقت للتحميلات
 DOWNLOAD_FOLDER = "downloads"
