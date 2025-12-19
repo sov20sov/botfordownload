@@ -203,6 +203,10 @@ class SocialMediaDownloader:
         self.ydl_opts_audio = {
             'format': 'bestaudio/best',
             'outtmpl': f'{DOWNLOAD_FOLDER}/%(title)s.%(ext)s',
+
+            # 👇 استخدم المسار الحقيقي الذي طُبع عندك
+            'ffmpeg_location': '/nix/store/xxxxx-ffmpeg-6.x/bin',
+
             'postprocessors': [{
                 'key': 'FFmpegExtractAudio',
                 'preferredcodec': 'mp3',
@@ -211,6 +215,7 @@ class SocialMediaDownloader:
             'quiet': False,
             'nocheckcertificate': True,
         }
+
     
     def download_image(self, url):
         """تحميل صورة من الرابط - مع طرق متعددة"""
