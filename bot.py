@@ -192,12 +192,16 @@ class SocialMediaDownloader:
         self.ydl_opts_video = {
             'format': 'best[ext=mp4]/best',
             'outtmpl': f'{DOWNLOAD_FOLDER}/%(title)s.%(ext)s',
-            'quiet': False,
-            'no_warnings': False,
-            'nocheckcertificate': True,
             'prefer_ffmpeg': True,
             'merge_output_format': 'mp4',
+
+            # 👇 نفس المسار
+            'ffmpeg_location': '/nix/store/xxxxx-ffmpeg-6.x/bin',
+
+            'quiet': False,
+            'nocheckcertificate': True,
         }
+
         
         # إعدادات تحميل الصوت
         self.ydl_opts_audio = {
