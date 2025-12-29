@@ -12,6 +12,8 @@ import re
 import subprocess
 import glob
 import json
+import random
+import time
 from datetime import datetime
 import shutil
 
@@ -217,97 +219,258 @@ class BotStats:
 # إنشاء كائن الإحصائيات
 stats = BotStats()
 
+
 class SocialMediaDownloader:
-    """فئة لتحميل المحتوى من مواقع التواصل الاجتماعي"""
+    """فئة لتحميل المحتوى مع حلول المشاكل"""
     
     def __init__(self):
         base_opts = {
-    'quiet': True,
-    'no_warnings': True,
-    'nocheckcertificate': True,
-
-    # 🔐 مهم جداً لمقاومة الحظر
-    'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
-                  'AppleWebKit/537.36 (KHTML, like Gecko) '
-                  'Chrome/120.0.0.0 Safari/537.36',
-
-    # 🧠 تقليل الضغط
-    'sleep_interval': 1,
-    'max_sleep_interval': 3,
-
-    # 🛑 يمنع محاولات زائدة
-    'retries': 3,
-    'fragment_retries': 3,
-
-    # يمنع مشاكل yt-dlp الجديدة
-    'extractor_args': {
-        'youtube': {
-            'skip': ['dash', 'hls']
+            'quiet': False,
+            'no_warnings': False,
+            'nocheckcertificate': True,
+            # حل مشكلة YouTube Bot Detection
+            'extractor_args': {
+                'youtube': {
+                    'player_client': ['android', 'web'],
+                    'skip': ['hls', 'dash']
+                }
+            },
+            # User Agents متعددة لتجنب الحظر
+            'user_agent': self._get_random_user_agent(),
+            # إضافة Headers إضافية
+            'http_headers': {
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                'Accept-Language': 'en-us,en;q=0.5',
+                'Sec-Fetch-Mode': 'navigate',
+            }
         }
-    }
-}
         
-        # إضافة مسار ffmpeg إذا كان متاحاً
         if FFMPEG_PATH:
             base_opts['ffmpeg_location'] = os.path.dirname(FFMPEG_PATH)
         
-        # إعدادات تحميل الفيديو
+        # إعدادات الفيديو مع حلول
         self.ydl_opts_video = {
             **base_opts,
             'format': 'best[ext=mp4]/best',
             'outtmpl': f'{DOWNLOAD_FOLDER}/%(title)s.%(ext)s',
             'prefer_ffmpeg': True,
             'merge_output_format': 'mp4',
+            # تجنب الحظر
+            'socket_timeout': 30,
+            'retries': 3,
         }
         
-        # إعدادات تحميل الصوت بدون تحويل (إذا لم يكن ffmpeg متاحاً)
+        # إعدادات الصوت مع حلول
         if FFMPEG_PATH:
             self.ydl_opts_audio = {
-    **base_opts,
-    'format': 'bestaudio/best',
-    'outtmpl': f'{DOWNLOAD_FOLDER}/%(title)s.%(ext)s',
-    'noplaylist': True,
-    'postprocessors': [{
-        'key': 'FFmpegExtractAudio',
-        'preferredcodec': 'mp3',
-        'preferredquality': '192',
-    }],
-}
-
+                **base_opts,
+                'format': 'bestaudio/best',
+                'outtmpl': f'{DOWNLOAD_FOLDER}/%(title)s.%(ext)s',
+                'postprocessors': [{
+                    'key': 'FFmpegExtractAudio',
+                    'preferredcodec': 'mp3',
+                    'preferredquality': '192',
+                }],
+                'socket_timeout': 30,
+                'retries': 3,
+            }
         else:
-            # بدون تحويل - تحميل الصوت مباشرة
-            logger.warning("⚠️ ffmpeg غير متاح - سيتم تحميل الصوت بصيغته الأصلية")
             self.ydl_opts_audio = {
                 **base_opts,
                 'format': 'bestaudio[ext=m4a]/bestaudio/best',
                 'outtmpl': f'{DOWNLOAD_FOLDER}/%(title)s.%(ext)s',
+                'socket_timeout': 30,
+                'retries': 3,
             }
     
+    def _get_random_user_agent(self):
+        """الحصول على User Agent عشوائي"""
+        user_agents = [
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:121.0) Gecko/20100101 Firefox/121.0',
+            'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Mozilla/5.0 (iPhone; CPU iPhone OS 17_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.1 Mobile/15E148 Safari/604.1'
+        ]
+        return random.choice(user_agents)
+    
+    def download_audio(self, url):
+        """تحميل الصوت مع معالجة أخطاء YouTube"""
+        max_retries = 3
+        retry_delay = 2
+        
+        for attempt in range(max_retries):
+            try:
+                # تحديث User Agent لكل محاولة
+                self.ydl_opts_audio['user_agent'] = self._get_random_user_agent()
+                
+                with yt_dlp.YoutubeDL(self.ydl_opts_audio) as ydl:
+                    info = ydl.extract_info(url, download=True)
+                    filename = ydl.prepare_filename(info)
+                    
+                    if FFMPEG_PATH:
+                        audio_filename = filename.rsplit('.', 1)[0] + '.mp3'
+                        if not os.path.exists(audio_filename):
+                            base = os.path.splitext(filename)[0]
+                            for ext in ['.mp3', '.m4a', '.opus', '.webm']:
+                                test_file = f"{base}{ext}"
+                                if os.path.exists(test_file):
+                                    audio_filename = test_file
+                                    break
+                    else:
+                        audio_filename = filename
+                        if not os.path.exists(audio_filename):
+                            base = os.path.splitext(filename)[0]
+                            for ext in ['.m4a', '.webm', '.opus', '.mp3']:
+                                test_file = f"{base}{ext}"
+                                if os.path.exists(test_file):
+                                    audio_filename = test_file
+                                    break
+                    
+                    return audio_filename, info.get('title', 'صوت')
+                    
+            except Exception as e:
+                error_msg = str(e)
+                logger.warning(f"محاولة {attempt + 1}/{max_retries} فشلت: {error_msg[:100]}")
+                
+                # إذا كانت آخر محاولة، ارمي الخطأ
+                if attempt == max_retries - 1:
+                    if 'Sign in to confirm' in error_msg or 'bot' in error_msg.lower():
+                        raise Exception("YouTube يحظر الطلبات حالياً. جرب مرة أخرى بعد دقائق أو استخدم رابطاً مختلفاً.")
+                    elif 'ffmpeg' in error_msg.lower() or 'ffprobe' in error_msg.lower():
+                        raise Exception("لا يمكن معالجة الصوت حالياً. جرب رابطاً مختلفاً.")
+                    else:
+                        raise Exception(f"خطأ في تحميل الصوت: {error_msg[:150]}")
+                
+                # انتظر قبل المحاولة التالية
+                time.sleep(retry_delay * (attempt + 1))
+    
+    def download_video(self, url):
+        """تحميل فيديو مع معالجة الأخطاء"""
+        max_retries = 3
+        retry_delay = 2
+        
+        for attempt in range(max_retries):
+            try:
+                # تحديث User Agent
+                self.ydl_opts_video['user_agent'] = self._get_random_user_agent()
+                
+                with yt_dlp.YoutubeDL(self.ydl_opts_video) as ydl:
+                    info = ydl.extract_info(url, download=True)
+                    filename = ydl.prepare_filename(info)
+                    
+                    if not filename.endswith('.mp4'):
+                        base = os.path.splitext(filename)[0]
+                        new_filename = f"{base}.mp4"
+                        if os.path.exists(new_filename):
+                            filename = new_filename
+                    
+                    return filename, info.get('title', 'فيديو')
+                    
+            except Exception as e:
+                error_msg = str(e)
+                logger.warning(f"محاولة {attempt + 1}/{max_retries} فشلت: {error_msg[:100]}")
+                
+                if attempt == max_retries - 1:
+                    if '429' in error_msg or 'Too Many Requests' in error_msg:
+                        raise Exception("الخادم محظور مؤقتاً. جرب بعد 5-10 دقائق.")
+                    elif 'Sign in' in error_msg or 'bot' in error_msg.lower():
+                        raise Exception("المنصة تحظر الطلبات حالياً. جرب رابطاً آخر أو انتظر قليلاً.")
+                    else:
+                        raise Exception(f"خطأ في تحميل الفيديو: {error_msg[:150]}")
+                
+                time.sleep(retry_delay * (attempt + 1))
+    
     def download_image(self, url):
-        """تحميل صورة من الرابط - مع طرق متعددة"""
-        logger.info(f"محاولة تحميل صورة من: {url}")
+        """تحميل صورة مع معالجة 429"""
+        max_retries = 2
         
+        for attempt in range(max_retries):
+            try:
+                logger.info(f"محاولة {attempt + 1}: تحميل صورة من: {url}")
+                
+                # جرب Web Scraping أولاً
+                try:
+                    return self._download_with_scraping(url)
+                except Exception as e:
+                    logger.warning(f"فشل Web Scraping: {e}")
+                
+                # جرب التحميل المباشر
+                try:
+                    return self._download_direct(url)
+                except Exception as e:
+                    logger.warning(f"فشل التحميل المباشر: {e}")
+                
+                raise Exception("فشلت جميع طرق التحميل")
+                
+            except Exception as e:
+                error_msg = str(e)
+                
+                if attempt == max_retries - 1:
+                    if '429' in error_msg:
+                        raise Exception("Instagram محظور مؤقتاً. جرب بعد 10 دقائق.")
+                    else:
+                        raise Exception(f"فشل تحميل الصورة: {error_msg[:100]}")
+                
+                time.sleep(3 * (attempt + 1))
+    
+    def search_youtube(self, query, max_results=5):
+        """البحث في YouTube مع معالجة الأخطاء"""
         try:
-            logger.info("استخدام Web Scraping...")
-            return self._download_with_scraping(url)
+            logger.info(f"البحث في YouTube: {query}")
+            
+            ydl_opts = {
+                'quiet': True,
+                'no_warnings': True,
+                'extract_flat': True,
+                'nocheckcertificate': True,
+                'user_agent': self._get_random_user_agent(),
+                'extractor_args': {
+                    'youtube': {
+                        'player_client': ['android', 'web'],
+                    }
+                },
+            }
+            
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                search_query = f"ytsearch{max_results}:{query}"
+                result = ydl.extract_info(search_query, download=False)
+                
+                if not result or 'entries' not in result:
+                    raise Exception("لم يتم العثور على نتائج")
+                
+                videos = []
+                for entry in result['entries']:
+                    if entry:
+                        videos.append({
+                            'id': entry.get('id'),
+                            'title': entry.get('title'),
+                            'url': f"https://www.youtube.com/watch?v={entry.get('id')}",
+                            'duration': entry.get('duration', 0),
+                            'channel': entry.get('uploader', entry.get('channel', 'Unknown'))
+                        })
+                
+                logger.info(f"تم العثور على {len(videos)} نتيجة")
+                return videos
+                
         except Exception as e:
-            logger.warning(f"فشل Web Scraping: {e}")
-        
-        try:
-            logger.info("محاولة التحميل المباشر...")
-            return self._download_direct(url)
-        except Exception as e:
-            logger.warning(f"فشل التحميل المباشر: {e}")
-        
-        logger.error("فشلت جميع الطرق")
-        raise Exception("فشل تحميل الصورة. تأكد من أن الرابط يحتوي على صورة عامة")
+            logger.error(f"خطأ في البحث: {e}")
+            if 'Sign in' in str(e) or 'bot' in str(e).lower():
+                raise Exception("YouTube يحظر البحث حالياً. جرب مرة أخرى بعد دقائق.")
+            raise Exception(f"فشل البحث: {str(e)[:100]}")
     
     def _download_with_scraping(self, url):
-        """تحميل صورة باستخدام Web Scraping"""
+        """تحميل صورة مع تأخير عشوائي"""
+        # تأخير عشوائي لتجنب الحظر
+        time.sleep(random.uniform(1, 3))
+        
         headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'User-Agent': self._get_random_user_agent(),
             'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
             'Accept-Language': 'en-US,en;q=0.5',
+            'Accept-Encoding': 'gzip, deflate, br',
+            'Connection': 'keep-alive',
+            'Upgrade-Insecure-Requests': '1',
         }
         
         try:
@@ -334,9 +497,12 @@ class SocialMediaDownloader:
                         break
             
             if not image_url:
-                raise Exception("لم يتم العثور على رابط صورة في الصفحة")
+                raise Exception("لم يتم العثور على رابط صورة")
             
             logger.info(f"تم العثور على رابط الصورة: {image_url[:100]}...")
+            
+            # تأخير قبل تحميل الصورة
+            time.sleep(random.uniform(0.5, 1.5))
             
             img_response = requests.get(image_url, headers=headers, timeout=30)
             img_response.raise_for_status()
@@ -351,7 +517,7 @@ class SocialMediaDownloader:
             else:
                 ext = 'jpg'
             
-            filename = f"{DOWNLOAD_FOLDER}/scraped_image.{ext}"
+            filename = f"{DOWNLOAD_FOLDER}/scraped_image_{random.randint(1000, 9999)}.{ext}"
             
             with open(filename, 'wb') as f:
                 f.write(img_response.content)
@@ -362,9 +528,13 @@ class SocialMediaDownloader:
             raise Exception(f"فشل Web Scraping: {str(e)}")
     
     def _download_direct(self, url):
-        """تحميل مباشر للروابط المباشرة"""
+        """تحميل مباشر مع headers محسنة"""
+        time.sleep(random.uniform(0.5, 1.5))
+        
         headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+            'User-Agent': self._get_random_user_agent(),
+            'Accept': 'image/webp,image/apng,image/*,*/*;q=0.8',
+            'Accept-Language': 'en-US,en;q=0.9',
         }
         
         response = requests.get(url, headers=headers, timeout=30)
@@ -386,74 +556,27 @@ class SocialMediaDownloader:
             if ext not in ['jpg', 'jpeg', 'png', 'gif', 'webp']:
                 ext = 'jpg'
         
-        filename = f"{DOWNLOAD_FOLDER}/direct_image.{ext}"
+        filename = f"{DOWNLOAD_FOLDER}/direct_image_{random.randint(1000, 9999)}.{ext}"
         
         with open(filename, 'wb') as f:
             f.write(response.content)
         
         return filename, "صورة"
     
-    def download_video(self, url):
-        """تحميل فيديو من الرابط"""
-        try:
-            with yt_dlp.YoutubeDL(self.ydl_opts_video) as ydl:
-                info = ydl.extract_info(url, download=True)
-                filename = ydl.prepare_filename(info)
-                
-                if not filename.endswith('.mp4'):
-                    base = os.path.splitext(filename)[0]
-                    new_filename = f"{base}.mp4"
-                    if os.path.exists(new_filename):
-                        filename = new_filename
-                
-                return filename, info.get('title', 'فيديو')
-        except Exception as e:
-            raise Exception(f"خطأ في تحميل الفيديو: {str(e)}")
-    
-    def download_audio(self, url):
-        """تحميل الصوت من الرابط"""
-        try:
-            with yt_dlp.YoutubeDL(self.ydl_opts_audio) as ydl:
-                info = ydl.extract_info(url, download=True)
-                filename = ydl.prepare_filename(info)
-                
-                # إذا كان ffmpeg متاحاً، ابحث عن ملف mp3
-                if FFMPEG_PATH:
-                    audio_filename = filename.rsplit('.', 1)[0] + '.mp3'
-                    if not os.path.exists(audio_filename):
-                        base = os.path.splitext(filename)[0]
-                        for ext in ['.mp3', '.m4a', '.opus', '.webm']:
-                            test_file = f"{base}{ext}"
-                            if os.path.exists(test_file):
-                                audio_filename = test_file
-                                break
-                else:
-                    # بدون ffmpeg، استخدم الملف كما هو
-                    audio_filename = filename
-                    # تأكد من وجود الملف بامتدادات مختلفة
-                    if not os.path.exists(audio_filename):
-                        base = os.path.splitext(filename)[0]
-                        for ext in ['.m4a', '.webm', '.opus', '.mp3']:
-                            test_file = f"{base}{ext}"
-                            if os.path.exists(test_file):
-                                audio_filename = test_file
-                                break
-                
-                return audio_filename, info.get('title', 'صوت')
-        except Exception as e:
-            error_msg = str(e)
-            if 'ffmpeg' in error_msg.lower() or 'ffprobe' in error_msg.lower():
-                raise Exception("لا يمكن معالجة الصوت حالياً. جرب رابطاً مختلفاً أو تواصل مع المطور.")
-            raise Exception(f"خطأ في تحميل الصوت: {error_msg}")
-    
     def get_info(self, url):
-        """الحصول على معلومات مفصلة عن الرابط"""
+        """الحصول على معلومات مع معالجة أخطاء"""
         try:
             opts = {
                 'quiet': True, 
                 'no_warnings': True,
                 'nocheckcertificate': True,
                 'extract_flat': False,
+                'user_agent': self._get_random_user_agent(),
+                'extractor_args': {
+                    'youtube': {
+                        'player_client': ['android', 'web'],
+                    }
+                },
             }
             
             with yt_dlp.YoutubeDL(opts) as ydl:
@@ -466,47 +589,12 @@ class SocialMediaDownloader:
                 
         except yt_dlp.utils.DownloadError as e:
             logger.error(f"خطأ yt-dlp: {e}")
+            if 'Sign in' in str(e) or 'bot' in str(e).lower():
+                raise Exception("المنصة تحظر الطلبات حالياً. جرب لاحقاً.")
             raise Exception("لا يمكن الوصول إلى هذا المحتوى")
         except Exception as e:
             logger.error(f"خطأ عام في get_info: {e}")
-            raise Exception(f"خطأ في جلب المعلومات: {str(e)}")
-    
-    def search_youtube(self, query, max_results=5):
-        """البحث في YouTube عن أغنية"""
-        try:
-            logger.info(f"البحث في YouTube: {query}")
-            
-            ydl_opts = {
-                'quiet': True,
-                'no_warnings': True,
-                'extract_flat': True,
-                'nocheckcertificate': True,
-            }
-            
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                search_query = f"ytsearch{max_results}:{query}"
-                result = ydl.extract_info(search_query, download=False)
-                
-                if not result or 'entries' not in result:
-                    raise Exception("لم يتم العثور على نتائج")
-                
-                videos = []
-                for entry in result['entries']:
-                    if entry:
-                        videos.append({
-                            'id': entry.get('id'),
-                            'title': entry.get('title'),
-                            'url': f"https://www.youtube.com/watch?v={entry.get('id')}",
-                            'duration': entry.get('duration', 0),
-                            'channel': entry.get('uploader', entry.get('channel', 'Unknown'))
-                        })
-                
-                logger.info(f"تم العثور على {len(videos)} نتيجة")
-                return videos
-                
-        except Exception as e:
-            logger.error(f"خطأ في البحث: {e}")
-            raise Exception(f"فشل البحث: {str(e)}")
+            raise Exception(f"خطأ في جلب المعلومات: {str(e)[:100]}")
 
 # إنشاء كائن التحميل
 downloader = SocialMediaDownloader()
