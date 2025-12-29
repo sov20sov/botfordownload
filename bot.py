@@ -1,3 +1,4 @@
+
 import os
 import logging
 import requests
@@ -220,12 +221,31 @@ class SocialMediaDownloader:
     """فئة لتحميل المحتوى من مواقع التواصل الاجتماعي"""
     
     def __init__(self):
-        # إعدادات أساسية
         base_opts = {
-            'quiet': False,
-            'no_warnings': False,
-            'nocheckcertificate': True,
+    'quiet': True,
+    'no_warnings': True,
+    'nocheckcertificate': True,
+
+    # 🔐 مهم جداً لمقاومة الحظر
+    'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
+                  'AppleWebKit/537.36 (KHTML, like Gecko) '
+                  'Chrome/120.0.0.0 Safari/537.36',
+
+    # 🧠 تقليل الضغط
+    'sleep_interval': 1,
+    'max_sleep_interval': 3,
+
+    # 🛑 يمنع محاولات زائدة
+    'retries': 3,
+    'fragment_retries': 3,
+
+    # يمنع مشاكل yt-dlp الجديدة
+    'extractor_args': {
+        'youtube': {
+            'skip': ['dash', 'hls']
         }
+    }
+}
         
         # إضافة مسار ffmpeg إذا كان متاحاً
         if FFMPEG_PATH:
@@ -243,15 +263,17 @@ class SocialMediaDownloader:
         # إعدادات تحميل الصوت بدون تحويل (إذا لم يكن ffmpeg متاحاً)
         if FFMPEG_PATH:
             self.ydl_opts_audio = {
-                **base_opts,
-                'format': 'bestaudio/best',
-                'outtmpl': f'{DOWNLOAD_FOLDER}/%(title)s.%(ext)s',
-                'postprocessors': [{
-                    'key': 'FFmpegExtractAudio',
-                    'preferredcodec': 'mp3',
-                    'preferredquality': '192',
-                }],
-            }
+    **base_opts,
+    'format': 'bestaudio/best',
+    'outtmpl': f'{DOWNLOAD_FOLDER}/%(title)s.%(ext)s',
+    'noplaylist': True,
+    'postprocessors': [{
+        'key': 'FFmpegExtractAudio',
+        'preferredcodec': 'mp3',
+        'preferredquality': '192',
+    }],
+}
+
         else:
             # بدون تحويل - تحميل الصوت مباشرة
             logger.warning("⚠️ ffmpeg غير متاح - سيتم تحميل الصوت بصيغته الأصلية")
@@ -558,39 +580,37 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     stats.add_user(user.id, user.full_name, user.username or "بدون معرف")
     
-    welcome_message = """ 
+    welcome_message = f"""
+╔════════════════════════════════
+║ 🎉 مرحباً بك في بوت التحميل
+╚════════════════════════════════
 
-🎉 أهلاً وسهلاً بك في بوت تحميل المحتوى من مواقع التواصل الاجتماعي! 👋
+👋 أهلاً {user.first_name}!
+
 مع هذا البوت يمكنك بسهولة تنزيل كل ما تحتاجه من صور، فيديوهات، موسيقى، بالإضافة إلى عرض المعلومات الخاصة بالمحتوى.
 
-📥 ما الذي يمكنك تحميله؟
+┌─ 📥 ما يمكنك تحميله:
+│ 🎥 فيديوهات بجودة عالية
+│ 🎵 موسيقى بصيغة MP3
+│ 🖼 صور من المنصات المختلفة
+│ 🔍 البحث وتحميل الأغاني
+└─────────────────────
 
-🎥 الفيديوهات
-🎵 الموسيقى
-🖼 الصور (سيتم تفعيلها قريبًا بعد انتهاء الصيانة)
+┌─ 🌐 المنصات المدعومة:
+│ YouTube – Instagram – TikTok
+│ Facebook – Twitter/X – Pinterest
+│ SoundCloud – والمزيد...
+└─────────────────────
 
-🌐 المنصات المدعومة
-
-YouTube – Instagram – TikTok – Facebook – Twitter/X – Pinterest – SoundCloud
-والمزيد من المنصات الأخرى!
-
-📝 كيفية الاستخدام
-
-1️⃣ أرسل رابط الفيديو أو موسيقى مباشرة ليتم تحميلها
-2️⃣ أو استخدم الاموامر
-
-/video [رابط] لتحميل فيديو
-
-/audio [رابط] لتحميل موسيقى فقط
-
-/info [رابط] لعرض معلومات المحتوى
-
-/search [اسم الأغنية] للبحث عن أغنية
+┌─ 📝 كيفية الاستخدام:
+│ 1️⃣ اختر نوع المحتوى من القائمة
+│ 2️⃣ أرسل الرابط أو اسم الأغنية
+│ 3️⃣ انتظر التحميل والإرسال
+└─────────────────────
 
 🔗 تم تطوير البوت بواسطة إدارة قناة ساخر | عالم برشلونة
 
-✨ استمتع بتجربتك! 😄
-
+💡 اختر ما تريد من القائمة أدناه:
     """
     
     await update.message.reply_text(
@@ -832,6 +852,7 @@ async def download_song_callback(update: Update, context: ContextTypes.DEFAULT_T
         return
     
     await query.message.edit_text(f"🎵 جاري تحميل: {video['title'][:50]}...")
+    await asyncio.sleep(2)
     
     try:
         filename, title = downloader.download_audio(video['url'])
@@ -839,6 +860,7 @@ async def download_song_callback(update: Update, context: ContextTypes.DEFAULT_T
         stats.add_download('search')
         
         await query.message.edit_text("📤 جاري إرسال الأغنية...")
+        await asyncio.sleep(2)
         
         with open(filename, 'rb') as audio_file:
             await query.message.reply_audio(

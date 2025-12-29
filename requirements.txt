@@ -1,22 +1,17 @@
-anyio==4.11.0
-APScheduler==3.10.4
-cachetools==4.2.2
-certifi==2025.10.5
-h11==0.16.0
-httpcore==1.0.9
-httpx==0.25.2
-idna==3.11
+# Telegram Bot
 python-telegram-bot==20.7
-pytz==2025.2
-setuptools==65.5.0
-six==1.17.0
-sniffio==1.3.1
-tornado==6.1
-typing_extensions==4.15.0
-tzdata==2025.2
-tzlocal==5.3.1
-yt-dlp==2025.10.22
-python-dotenv==1.0.0
-instaloader==4.10.3
-gallery-dl==1.26.8
-Pillow==10.1.0
+
+# Downloader (YouTube / Instagram / TikTok)
+yt-dlp>=2024.12.30
+
+# HTTP requests
+requests>=2.31.0
+
+# Environment variables
+python-dotenv>=1.0.0
+
+# Images
+Pillow>=10.0.0
+
+# Scheduling (إذا كنت تستخدم APScheduler فعلاً)
+APScheduler>=3.10.4
