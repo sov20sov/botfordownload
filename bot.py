@@ -17,6 +17,8 @@ import time
 from datetime import datetime
 import shutil
 
+admin_states = {}
+
 # تحميل المتغيرات من ملف .env
 load_dotenv()
 
@@ -643,8 +645,15 @@ async def check_subscription_callback(update: Update, context: ContextTypes.DEFA
     else:
         await subscription_required(update, context)
 
-def get_type_selection_keyboard():
-    """إنشاء لوحة مفاتيح اختيار نوع المحتوى"""
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+
+def get_type_selection_keyboard(is_admin: bool = False):
+    """
+    إنشاء لوحة مفاتيح اختيار نوع المحتوى
+    is_admin = True  -> يظهر زر الرسالة العامة
+    is_admin = False -> لا يظهر
+    """
+
     keyboard = [
         [
             InlineKeyboardButton("🎬 فيديو", callback_data="type_video")
@@ -657,6 +666,13 @@ def get_type_selection_keyboard():
             InlineKeyboardButton("🔍 بحث أغنية", callback_data="type_search")
         ]
     ]
+
+    # زر خاص بالمطور فقط
+    if is_admin:
+        keyboard.append([
+            InlineKeyboardButton("📢 إرسال رسالة عامة", callback_data="admin_broadcast")
+        ])
+
     return InlineKeyboardMarkup(keyboard)
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -703,7 +719,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     await update.message.reply_text(
         welcome_message,
-        reply_markup=get_type_selection_keyboard()
+        is_admin = user.id == DEVELOPER_ID,
+        reply_markup=get_type_selection_keyboard(is_admin)  # type: ignore
     )
 
 async def type_selection_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1117,6 +1134,48 @@ async def download_video_handler(update: Update, context: ContextTypes.DEFAULT_T
 
 async def handle_url(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """معالجة الروابط أو البحث حسب اختيار المستخدم"""
+    
+    user_id = update.effective_user.id
+
+    # ===============================
+    # 📢 حالة إرسال رسالة عامة (للمطور فقط)
+    # ===============================
+    if user_id == DEVELOPER_ID and admin_states.get(user_id) == "waiting_broadcast":
+        broadcast_text = update.message.text
+
+        # الخروج من وضع الإرسال
+        admin_states.pop(user_id, None)
+
+        sent = 0
+        failed = 0
+
+        status_msg = await update.message.reply_text("📤 جاري إرسال الرسالة...")
+
+        for uid in stats.data["users"].keys():
+            try:
+                await context.bot.send_message(
+                    chat_id=int(uid),
+                    text=f"📢 رسالة من إدارة البوت:\n\n{broadcast_text}"
+                )
+                sent += 1
+                await asyncio.sleep(0.05)  # مهم جدًا لتجنب حظر Telegram
+            except:
+                failed += 1
+
+        await status_msg.edit_text(
+            f"✅ تم الإرسال بنجاح\n\n"
+            f"👥 تم الإرسال إلى: {sent}\n"
+            f"❌ فشل الإرسال إلى: {failed}"
+        )
+        return
+    # ===============================
+
+    # 👇 بعده يأتي الكود الأصلي
+    if not await check_subscription(update, context):
+        await subscription_required(update, context)
+        return
+
+    text = update.message.text
     if not await check_subscription(update, context):
         await subscription_required(update, context)
         return
@@ -1246,6 +1305,23 @@ Instagram, TikTok, YouTube, Twitter, Facebook, Pinterest, SoundCloud
     
     await update.message.reply_text(help_text)
 
+async def admin_broadcast_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+
+    user_id = update.effective_user.id
+
+    if user_id != DEVELOPER_ID:
+        return
+
+    admin_states[user_id] = "waiting_broadcast"
+
+    await query.message.edit_text(
+        "📢 إرسال رسالة عامة\n\n"
+        "✍️ اكتب الآن الرسالة التي تريد إرسالها لجميع المستخدمين.\n\n"
+        "⚠️ سيتم الإرسال فورًا بعد الإرسال."
+    )
+
 def main():
     """تشغيل البوت"""
     # طباعة معلومات ffmpeg
@@ -1260,6 +1336,9 @@ def main():
     application.add_handler(CallbackQueryHandler(type_selection_callback, pattern="^type_"))
     application.add_handler(CallbackQueryHandler(download_song_callback, pattern="^download_song_"))
     
+    application.add_handler(
+    CallbackQueryHandler(admin_broadcast_callback, pattern="^admin_broadcast$"))
+
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("help", help_command))
     application.add_handler(CommandHandler("image", image_command))
