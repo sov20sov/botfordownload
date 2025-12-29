@@ -17,8 +17,6 @@ import time
 from datetime import datetime
 import shutil
 
-admin_states = {}
-
 # تحميل المتغيرات من ملف .env
 load_dotenv()
 
