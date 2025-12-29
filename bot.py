@@ -1138,11 +1138,11 @@ async def handle_url(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # ===============================
     # 📢 حالة إرسال رسالة عامة (للمطور فقط)
     # ===============================
-    if user_id == DEVELOPER_ID and admin_states.get(user_id) == "waiting_broadcast":
+    if user_id == DEVELOPER_ID and admin_states.get(user_id) == "waiting_broadcast": # type: ignore
         broadcast_text = update.message.text
 
         # الخروج من وضع الإرسال
-        admin_states.pop(user_id, None)
+        admin_states.pop(user_id, None) # type: ignore
 
         sent = 0
         failed = 0
@@ -1312,7 +1312,7 @@ async def admin_broadcast_callback(update: Update, context: ContextTypes.DEFAULT
     if user_id != DEVELOPER_ID:
         return
 
-    admin_states[user_id] = "waiting_broadcast"
+    admin_states[user_id] = "waiting_broadcast" # type: ignore
 
     await query.message.edit_text(
         "📢 إرسال رسالة عامة\n\n"
