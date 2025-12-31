@@ -1021,21 +1021,22 @@ async def audio_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     message = await update.message.reply_text("🎵 جاري تحميل الموسيقى...")
     
     try:
-        filename, title = downloader.download_audio(url)
-        
+        loop = asyncio.get_running_loop()
+        filename, title = await loop.run_in_executor(None, downloader.download_audio, url)
+
         await message.edit_text("📤 جاري إرسال الملف...")
-        
+
         with open(filename, 'rb') as audio_file:
             await update.message.reply_audio(
                 audio=audio_file,
                 title=title,
                 caption=f"🎵 {title}"
             )
-        
+
         stats.add_download('audio')
         os.remove(filename)
         await message.delete()
-        
+
     except Exception as e:
         stats.add_failed_download()
         await message.edit_text(f"❌ خطأ: {str(e)}")
@@ -1054,7 +1055,8 @@ async def info_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     message = await update.message.reply_text("🔍 جاري جلب المعلومات...")
     
     try:
-        info = downloader.get_info(url)
+        loop = asyncio.get_running_loop()
+        info = await loop.run_in_executor(None, downloader.get_info, url)
         
         if not info:
             await message.edit_text("❌ لم يتم العثور على معلومات")
@@ -1117,7 +1119,8 @@ async def search_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     stats.add_search()
     
     try:
-        results = downloader.search_youtube(query, max_results=5)
+        loop = asyncio.get_running_loop()
+        results = await loop.run_in_executor(None, downloader.search_youtube, query, 5)
         
         if not results:
             await message.edit_text("❌ لم يتم العثور على نتائج")
@@ -1175,7 +1178,8 @@ async def download_song_callback(update: Update, context: ContextTypes.DEFAULT_T
     await query.message.edit_text(f"🎵 جاري تحميل: {video['title'][:50]}...")
     
     try:
-        filename, title = downloader.download_audio(video['url'])
+        loop = asyncio.get_running_loop()
+        filename, title = await loop.run_in_executor(None, downloader.download_audio, video['url'])
         
         stats.add_download('search')
         
@@ -1258,7 +1262,8 @@ async def download_image_handler(update: Update, context: ContextTypes.DEFAULT_T
         logger.info(f"=== بدء تحميل الصورة ===")
         logger.info(f"الرابط: {url}")
         
-        filename, title = downloader.download_image(url)
+        loop = asyncio.get_running_loop()
+        filename, title = await loop.run_in_executor(None, downloader.download_image, url)
         
         logger.info(f"اسم الملف: {filename}")
         logger.info(f"هل الملف موجود: {os.path.exists(filename)}")
@@ -1314,7 +1319,8 @@ async def download_video_handler(update: Update, context: ContextTypes.DEFAULT_T
     message = await update.message.reply_text("🎬 جاري تحميل الفيديو...")
     
     try:
-        filename, title = downloader.download_video(url)
+        loop = asyncio.get_running_loop()
+        filename, title = await loop.run_in_executor(None, downloader.download_video, url)
         
         file_size = os.path.getsize(filename)
         max_size = 50 * 1024 * 1024
@@ -1352,7 +1358,8 @@ async def download_story_handler(update: Update, context: ContextTypes.DEFAULT_T
     
     filename = None
     try:
-        filename, title = downloader.download_instagram_story(url)
+        loop = asyncio.get_running_loop()
+        filename, title = await loop.run_in_executor(None, downloader.download_instagram_story, url)
         
         if not os.path.exists(filename):
             await message.edit_text("❌ الملف غير موجود")
