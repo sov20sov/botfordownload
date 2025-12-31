@@ -220,12 +220,48 @@ class SocialMediaDownloader:
     """فئة لتحميل المحتوى من مواقع التواصل الاجتماعي"""
     
     def __init__(self):
-        # إعدادات أساسية
+        # User-Agent strings للتجنب من اكتشاف البوت
+        user_agents = [
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36',
+            'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+        ]
+        import random
+        self.user_agent = random.choice(user_agents)
+        
+        # إعدادات أساسية محسنة
         base_opts = {
-            'quiet': False,
-            'no_warnings': False,
+            'quiet': True,
+            'no_warnings': True,
             'nocheckcertificate': True,
+            'user_agent': self.user_agent,
+            'extractor_args': {
+                'youtube': {
+                    'player_client': ['android', 'web'],
+                    'player_skip': ['webpage', 'configs'],
+                }
+            },
+            'http_headers': {
+                'User-Agent': self.user_agent,
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                'Accept-Language': 'en-us,en;q=0.5',
+                'Accept-Encoding': 'gzip, deflate',
+                'Connection': 'keep-alive',
+            },
+            'retries': 3,
+            'fragment_retries': 3,
+            'ignoreerrors': False,
+            'no_color': True,
         }
+        
+        # محاولة تحميل ملف cookies إذا كان موجوداً
+        cookies_file = os.getenv('YOUTUBE_COOKIES_FILE', 'cookies.txt')
+        if os.path.exists(cookies_file):
+            base_opts['cookiefile'] = cookies_file
+            logger.info(f"✅ تم تحميل ملف cookies من: {cookies_file}")
+        else:
+            logger.warning("⚠️ ملف cookies غير موجود - سيتم استخدام طرق بديلة")
         
         # إضافة مسار ffmpeg إذا كان متاحاً
         if FFMPEG_PATH:
@@ -234,7 +270,7 @@ class SocialMediaDownloader:
         # إعدادات تحميل الفيديو
         self.ydl_opts_video = {
             **base_opts,
-            'format': 'best[ext=mp4]/best',
+            'format': 'best[ext=mp4]/best[height<=1080]/best',
             'outtmpl': f'{DOWNLOAD_FOLDER}/%(title)s.%(ext)s',
             'prefer_ffmpeg': True,
             'merge_output_format': 'mp4',
@@ -371,68 +407,241 @@ class SocialMediaDownloader:
         
         return filename, "صورة"
     
-    def download_video(self, url):
-        """تحميل فيديو من الرابط"""
+    def download_instagram_story(self, url):
+        """تحميل قصة Instagram"""
         try:
-            with yt_dlp.YoutubeDL(self.ydl_opts_video) as ydl:
+            logger.info(f"محاولة تحميل قصة Instagram من: {url}")
+            
+            # استخراج معرف المستخدم من الرابط
+            username_match = re.search(r'instagram\.com/stories/([^/?]+)', url)
+            if not username_match:
+                raise Exception("❌ رابط غير صحيح. يجب أن يكون رابط قصة Instagram")
+            
+            username = username_match.group(1)
+            logger.info(f"اسم المستخدم: {username}")
+            
+            # استخدام yt-dlp لتحميل القصة
+            story_opts = {
+                'quiet': True,
+                'no_warnings': True,
+                'nocheckcertificate': True,
+                'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                'http_headers': {
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                },
+                'outtmpl': f'{DOWNLOAD_FOLDER}/%(title)s.%(ext)s',
+            }
+            
+            # إضافة مسار ffmpeg إذا كان متاحاً
+            if FFMPEG_PATH:
+                story_opts['ffmpeg_location'] = os.path.dirname(FFMPEG_PATH)
+            
+            with yt_dlp.YoutubeDL(story_opts) as ydl:
                 info = ydl.extract_info(url, download=True)
                 filename = ydl.prepare_filename(info)
                 
-                if not filename.endswith('.mp4'):
-                    base = os.path.splitext(filename)[0]
-                    new_filename = f"{base}.mp4"
-                    if os.path.exists(new_filename):
-                        filename = new_filename
-                
-                return filename, info.get('title', 'فيديو')
-        except Exception as e:
-            raise Exception(f"خطأ في تحميل الفيديو: {str(e)}")
-    
-    def download_audio(self, url):
-        """تحميل الصوت من الرابط"""
-        try:
-            with yt_dlp.YoutubeDL(self.ydl_opts_audio) as ydl:
-                info = ydl.extract_info(url, download=True)
-                filename = ydl.prepare_filename(info)
-                
-                # إذا كان ffmpeg متاحاً، ابحث عن ملف mp3
-                if FFMPEG_PATH:
-                    audio_filename = filename.rsplit('.', 1)[0] + '.mp3'
-                    if not os.path.exists(audio_filename):
+                # تحديد نوع الملف (صورة أو فيديو)
+                if info.get('vcodec') != 'none':
+                    # فيديو
+                    if not filename.endswith('.mp4'):
                         base = os.path.splitext(filename)[0]
-                        for ext in ['.mp3', '.m4a', '.opus', '.webm']:
-                            test_file = f"{base}{ext}"
-                            if os.path.exists(test_file):
-                                audio_filename = test_file
-                                break
+                        new_filename = f"{base}.mp4"
+                        if os.path.exists(new_filename):
+                            filename = new_filename
+                    return filename, f"قصة {username} (فيديو)"
                 else:
-                    # بدون ffmpeg، استخدم الملف كما هو
-                    audio_filename = filename
-                    # تأكد من وجود الملف بامتدادات مختلفة
-                    if not os.path.exists(audio_filename):
+                    # صورة
+                    content_type = info.get('ext', 'jpg')
+                    if not filename.endswith(('.jpg', '.jpeg', '.png', '.webp')):
                         base = os.path.splitext(filename)[0]
-                        for ext in ['.m4a', '.webm', '.opus', '.mp3']:
+                        for ext in ['.jpg', '.jpeg', '.png', '.webp']:
                             test_file = f"{base}{ext}"
                             if os.path.exists(test_file):
-                                audio_filename = test_file
+                                filename = test_file
                                 break
-                
-                return audio_filename, info.get('title', 'صوت')
+                    return filename, f"قصة {username} (صورة)"
+                    
+        except yt_dlp.utils.DownloadError as e:
+            error_msg = str(e).lower()
+            if 'private' in error_msg or 'not available' in error_msg:
+                raise Exception("❌ القصة غير متاحة أو خاصة. تأكد من أن القصة عامة.")
+            raise Exception(f"❌ خطأ في تحميل القصة: {str(e)}")
         except Exception as e:
-            error_msg = str(e)
-            if 'ffmpeg' in error_msg.lower() or 'ffprobe' in error_msg.lower():
-                raise Exception("لا يمكن معالجة الصوت حالياً. جرب رابطاً مختلفاً أو تواصل مع المطور.")
-            raise Exception(f"خطأ في تحميل الصوت: {error_msg}")
+            logger.error(f"خطأ في تحميل قصة Instagram: {e}")
+            raise Exception(f"❌ خطأ في تحميل القصة: {str(e)}")
+    
+    def download_video(self, url, max_retries=3):
+        """تحميل فيديو من الرابط مع آلية إعادة المحاولة"""
+        last_error = None
+        
+        for attempt in range(max_retries):
+            try:
+                # تحديث User-Agent في كل محاولة
+                import random
+                user_agents = [
+                    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                ]
+                opts = self.ydl_opts_video.copy()
+                opts['user_agent'] = random.choice(user_agents)
+                opts['http_headers']['User-Agent'] = opts['user_agent']
+                
+                with yt_dlp.YoutubeDL(opts) as ydl:
+                    info = ydl.extract_info(url, download=True)
+                    filename = ydl.prepare_filename(info)
+                    
+                    if not filename.endswith('.mp4'):
+                        base = os.path.splitext(filename)[0]
+                        new_filename = f"{base}.mp4"
+                        if os.path.exists(new_filename):
+                            filename = new_filename
+                    
+                    return filename, info.get('title', 'فيديو')
+                    
+            except yt_dlp.utils.DownloadError as e:
+                last_error = str(e)
+                error_msg = last_error.lower()
+                
+                # إذا كان الخطأ متعلق بالبوت، جرب طريقة بديلة
+                if 'bot' in error_msg or 'sign in' in error_msg or 'cookies' in error_msg:
+                    if attempt < max_retries - 1:
+                        logger.warning(f"⚠️ محاولة {attempt + 1}/{max_retries}: خطأ في المصادقة، جاري المحاولة بطريقة بديلة...")
+                        import time
+                        time.sleep(2)  # انتظار قصير قبل إعادة المحاولة
+                        # جرب بدون extractor_args
+                        opts = self.ydl_opts_video.copy()
+                        opts.pop('extractor_args', None)
+                        opts['user_agent'] = random.choice(user_agents)
+                        opts['http_headers']['User-Agent'] = opts['user_agent']
+                        continue
+                    else:
+                        raise Exception("❌ YouTube يطلب المصادقة. الرجاء المحاولة لاحقاً أو استخدام رابط مختلف.")
+                else:
+                    raise Exception(f"خطأ في تحميل الفيديو: {str(e)}")
+                    
+            except Exception as e:
+                last_error = str(e)
+                if attempt < max_retries - 1:
+                    logger.warning(f"⚠️ محاولة {attempt + 1}/{max_retries}: {str(e)}")
+                    import time
+                    time.sleep(2)
+                    continue
+                else:
+                    raise Exception(f"خطأ في تحميل الفيديو: {str(e)}")
+        
+        raise Exception(f"فشل تحميل الفيديو بعد {max_retries} محاولات: {last_error}")
+    
+    def download_audio(self, url, max_retries=3):
+        """تحميل الصوت من الرابط مع آلية إعادة المحاولة"""
+        last_error = None
+        
+        for attempt in range(max_retries):
+            try:
+                # تحديث User-Agent في كل محاولة
+                import random
+                user_agents = [
+                    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                ]
+                opts = self.ydl_opts_audio.copy()
+                opts['user_agent'] = random.choice(user_agents)
+                opts['http_headers']['User-Agent'] = opts['user_agent']
+                
+                with yt_dlp.YoutubeDL(opts) as ydl:
+                    info = ydl.extract_info(url, download=True)
+                    filename = ydl.prepare_filename(info)
+                    
+                    # إذا كان ffmpeg متاحاً، ابحث عن ملف mp3
+                    if FFMPEG_PATH:
+                        audio_filename = filename.rsplit('.', 1)[0] + '.mp3'
+                        if not os.path.exists(audio_filename):
+                            base = os.path.splitext(filename)[0]
+                            for ext in ['.mp3', '.m4a', '.opus', '.webm']:
+                                test_file = f"{base}{ext}"
+                                if os.path.exists(test_file):
+                                    audio_filename = test_file
+                                    break
+                    else:
+                        # بدون ffmpeg، استخدم الملف كما هو
+                        audio_filename = filename
+                        # تأكد من وجود الملف بامتدادات مختلفة
+                        if not os.path.exists(audio_filename):
+                            base = os.path.splitext(filename)[0]
+                            for ext in ['.m4a', '.webm', '.opus', '.mp3']:
+                                test_file = f"{base}{ext}"
+                                if os.path.exists(test_file):
+                                    audio_filename = test_file
+                                    break
+                    
+                    return audio_filename, info.get('title', 'صوت')
+                    
+            except yt_dlp.utils.DownloadError as e:
+                last_error = str(e)
+                error_msg = last_error.lower()
+                
+                # إذا كان الخطأ متعلق بالبوت، جرب طريقة بديلة
+                if 'bot' in error_msg or 'sign in' in error_msg or 'cookies' in error_msg:
+                    if attempt < max_retries - 1:
+                        logger.warning(f"⚠️ محاولة {attempt + 1}/{max_retries}: خطأ في المصادقة، جاري المحاولة بطريقة بديلة...")
+                        import time
+                        time.sleep(2)
+                        # جرب بدون extractor_args
+                        opts = self.ydl_opts_audio.copy()
+                        opts.pop('extractor_args', None)
+                        opts['user_agent'] = random.choice(user_agents)
+                        opts['http_headers']['User-Agent'] = opts['user_agent']
+                        continue
+                    else:
+                        raise Exception("❌ YouTube يطلب المصادقة. الرجاء المحاولة لاحقاً أو استخدام رابط مختلف.")
+                else:
+                    raise Exception(f"خطأ في تحميل الصوت: {str(e)}")
+                    
+            except Exception as e:
+                last_error = str(e)
+                error_msg = str(e).lower()
+                if 'ffmpeg' in error_msg or 'ffprobe' in error_msg:
+                    raise Exception("لا يمكن معالجة الصوت حالياً. جرب رابطاً مختلفاً أو تواصل مع المطور.")
+                if attempt < max_retries - 1:
+                    logger.warning(f"⚠️ محاولة {attempt + 1}/{max_retries}: {str(e)}")
+                    import time
+                    time.sleep(2)
+                    continue
+                else:
+                    raise Exception(f"خطأ في تحميل الصوت: {str(e)}")
+        
+        raise Exception(f"فشل تحميل الصوت بعد {max_retries} محاولات: {last_error}")
     
     def get_info(self, url):
         """الحصول على معلومات مفصلة عن الرابط"""
         try:
+            import random
+            user_agents = [
+                'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            ]
+            
             opts = {
                 'quiet': True, 
                 'no_warnings': True,
                 'nocheckcertificate': True,
                 'extract_flat': False,
+                'user_agent': random.choice(user_agents),
+                'http_headers': {
+                    'User-Agent': random.choice(user_agents),
+                    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                },
+                'extractor_args': {
+                    'youtube': {
+                        'player_client': ['android', 'web'],
+                    }
+                },
             }
+            
+            # محاولة تحميل ملف cookies إذا كان موجوداً
+            cookies_file = os.getenv('YOUTUBE_COOKIES_FILE', 'cookies.txt')
+            if os.path.exists(cookies_file):
+                opts['cookiefile'] = cookies_file
             
             with yt_dlp.YoutubeDL(opts) as ydl:
                 info = ydl.extract_info(url, download=False)
@@ -444,6 +653,9 @@ class SocialMediaDownloader:
                 
         except yt_dlp.utils.DownloadError as e:
             logger.error(f"خطأ yt-dlp: {e}")
+            error_msg = str(e).lower()
+            if 'bot' in error_msg or 'sign in' in error_msg:
+                raise Exception("❌ YouTube يطلب المصادقة. الرجاء المحاولة لاحقاً.")
             raise Exception("لا يمكن الوصول إلى هذا المحتوى")
         except Exception as e:
             logger.error(f"خطأ عام في get_info: {e}")
@@ -454,12 +666,33 @@ class SocialMediaDownloader:
         try:
             logger.info(f"البحث في YouTube: {query}")
             
+            import random
+            user_agents = [
+                'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            ]
+            
             ydl_opts = {
                 'quiet': True,
                 'no_warnings': True,
                 'extract_flat': True,
                 'nocheckcertificate': True,
+                'user_agent': random.choice(user_agents),
+                'http_headers': {
+                    'User-Agent': random.choice(user_agents),
+                    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                },
+                'extractor_args': {
+                    'youtube': {
+                        'player_client': ['android', 'web'],
+                    }
+                },
             }
+            
+            # محاولة تحميل ملف cookies إذا كان موجوداً
+            cookies_file = os.getenv('YOUTUBE_COOKIES_FILE', 'cookies.txt')
+            if os.path.exists(cookies_file):
+                ydl_opts['cookiefile'] = cookies_file
             
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 search_query = f"ytsearch{max_results}:{query}"
@@ -484,6 +717,9 @@ class SocialMediaDownloader:
                 
         except Exception as e:
             logger.error(f"خطأ في البحث: {e}")
+            error_msg = str(e).lower()
+            if 'bot' in error_msg or 'sign in' in error_msg:
+                raise Exception("❌ YouTube يطلب المصادقة. الرجاء المحاولة لاحقاً.")
             raise Exception(f"فشل البحث: {str(e)}")
 
 # إنشاء كائن التحميل
@@ -544,6 +780,7 @@ def get_type_selection_keyboard():
             InlineKeyboardButton("📊 معلومات", callback_data="type_info")
         ],
         [
+            InlineKeyboardButton("📸 قصة Instagram", callback_data="type_story"),
             InlineKeyboardButton("🔍 بحث أغنية", callback_data="type_search")
         ]
     ]
@@ -567,6 +804,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 🎥 الفيديوهات
 🎵 الموسيقى
+📸 قصص Instagram
 🖼 الصور (سيتم تفعيلها قريبًا بعد انتهاء الصيانة)
 
 🌐 المنصات المدعومة
@@ -582,6 +820,8 @@ YouTube – Instagram – TikTok – Facebook – Twitter/X – Pinterest – So
 /video [رابط] لتحميل فيديو
 
 /audio [رابط] لتحميل موسيقى فقط
+
+/story [رابط قصة Instagram] لتحميل قصة Instagram
 
 /info [رابط] لعرض معلومات المحتوى
 
@@ -613,7 +853,8 @@ async def type_selection_callback(update: Update, context: ContextTypes.DEFAULT_
         'video': '🎬',
         'audio': '🎵',
         'info': '📊',
-        'search': '🔍'
+        'search': '🔍',
+        'story': '📸'
     }
     
     type_name = {
@@ -621,7 +862,8 @@ async def type_selection_callback(update: Update, context: ContextTypes.DEFAULT_
         'video': 'فيديو',
         'audio': 'موسيقى',
         'info': 'معلومات',
-        'search': 'بحث أغنية'
+        'search': 'بحث أغنية',
+        'story': 'قصة Instagram'
     }
     
     if download_type == 'search':
@@ -629,6 +871,14 @@ async def type_selection_callback(update: Update, context: ContextTypes.DEFAULT_
             f"{type_emoji[download_type]} {type_name[download_type]}\n\n"
             f"أرسل اسم الأغنية التي تريد البحث عنها...\n\n"
             f"مثال: Imagine Dragons Believer\n\n"
+            f"💡 أو اختر نوع آخر:",
+            reply_markup=get_type_selection_keyboard()
+        )
+    elif download_type == 'story':
+        await query.message.edit_text(
+            f"{type_emoji[download_type]} {type_name[download_type]}\n\n"
+            f"أرسل رابط قصة Instagram...\n\n"
+            f"مثال: https://www.instagram.com/stories/username/1234567890/\n\n"
             f"💡 أو اختر نوع آخر:",
             reply_markup=get_type_selection_keyboard()
         )
@@ -652,6 +902,19 @@ async def image_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     url = context.args[0]
     await download_image_handler(update, context, url)
+
+async def story_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """تحميل قصة Instagram مباشرة"""
+    if not await check_subscription(update, context):
+        await subscription_required(update, context)
+        return
+    
+    if not context.args:
+        await update.message.reply_text("⚠️ الرجاء إرسال رابط قصة Instagram مع الأمر\nمثال: /story https://instagram.com/stories/username/1234567890/")
+        return
+    
+    url = context.args[0]
+    await download_story_handler(update, context, url)
 
 async def video_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """تحميل فيديو مباشرة"""
@@ -1005,6 +1268,81 @@ async def download_video_handler(update: Update, context: ContextTypes.DEFAULT_T
         stats.add_failed_download()
         await message.edit_text(f"❌ خطأ: {str(e)}")
 
+async def download_story_handler(update: Update, context: ContextTypes.DEFAULT_TYPE, url: str):
+    """معالج تحميل قصص Instagram"""
+    message = await update.message.reply_text("📸 جاري تحميل قصة Instagram...")
+    
+    filename = None
+    try:
+        filename, title = downloader.download_instagram_story(url)
+        
+        if not os.path.exists(filename):
+            await message.edit_text("❌ الملف غير موجود")
+            return
+        
+        file_size = os.path.getsize(filename)
+        if file_size == 0:
+            await message.edit_text("❌ الملف فارغ")
+            if os.path.exists(filename):
+                os.remove(filename)
+            return
+        
+        await message.edit_text("📤 جاري الإرسال...")
+        
+        # تحديد نوع الملف (صورة أو فيديو)
+        file_ext = os.path.splitext(filename)[1].lower()
+        
+        if file_ext in ['.mp4', '.mov', '.webm']:
+            # فيديو
+            max_size = 50 * 1024 * 1024
+            if file_size > max_size:
+                await message.edit_text(
+                    f"⚠️ الفيديو كبير جداً ({file_size // (1024*1024)} MB)\n"
+                    f"الحد الأقصى: 50 MB"
+                )
+                os.remove(filename)
+                return
+            
+            with open(filename, 'rb') as video:
+                await update.message.reply_video(
+                    video=video,
+                    caption=f"📸 {title}",
+                    supports_streaming=True
+                )
+            stats.add_download('video')
+        else:
+            # صورة
+            max_size = 10 * 1024 * 1024
+            if file_size > max_size:
+                await message.edit_text(
+                    f"⚠️ الصورة كبيرة جداً ({file_size // (1024*1024)} MB)\n"
+                    f"الحد الأقصى: 10 MB"
+                )
+                os.remove(filename)
+                return
+            
+            with open(filename, 'rb') as photo:
+                await update.message.reply_photo(
+                    photo=photo,
+                    caption=f"📸 {title}"
+                )
+            stats.add_download('image')
+        
+        os.remove(filename)
+        await message.delete()
+        
+    except Exception as e:
+        stats.add_failed_download()
+        error_msg = f"❌ خطأ: {str(e)[:200]}"
+        await message.edit_text(error_msg)
+        logger.error(f"خطأ في download_story_handler: {e}")
+        
+        if filename and os.path.exists(filename):
+            try:
+                os.remove(filename)
+            except:
+                pass
+
 async def handle_url(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """معالجة الروابط أو البحث حسب اختيار المستخدم"""
     if not await check_subscription(update, context):
@@ -1094,7 +1432,11 @@ async def handle_url(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception as e:
             stats.add_failed_download()
             await message.edit_text(f"❌ خطأ: {str(e)}")
+    elif download_type == 'story':
+        await download_story_handler(update, context, text)
     elif download_type == 'info':
+        # إنشاء context.args مؤقت للاستخدام مع info_command
+        context.args = [text]
         await info_command(update, context)
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1116,6 +1458,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 2️⃣ الأوامر (سريعة):
 /video [رابط] - فيديو
 /audio [رابط] - موسيقى
+/story [رابط قصة Instagram] - قصة Instagram
 /info [رابط] - معلومات
 /search [اسم الأغنية] - بحث أغنية
 
@@ -1155,6 +1498,7 @@ def main():
     application.add_handler(CommandHandler("image", image_command))
     application.add_handler(CommandHandler("video", video_command))
     application.add_handler(CommandHandler("audio", audio_command))
+    application.add_handler(CommandHandler("story", story_command))
     application.add_handler(CommandHandler("info", info_command))
     application.add_handler(CommandHandler("search", search_command))
     
