@@ -502,23 +502,36 @@ class SocialMediaDownloader:
             except yt_dlp.utils.DownloadError as e:
                 last_error = str(e)
                 error_msg = last_error.lower()
-                
-                # إذا كان الخطأ متعلق بالبوت، جرب طريقة بديلة
-                if 'bot' in error_msg or 'sign in' in error_msg or 'cookies' in error_msg:
-                    if attempt < max_retries - 1:
-                        logger.warning(f"⚠️ محاولة {attempt + 1}/{max_retries}: خطأ في المصادقة، جاري المحاولة بطريقة بديلة...")
-                        import time
-                        time.sleep(2)  # انتظار قصير قبل إعادة المحاولة
-                        # جرب بدون extractor_args
-                        opts = self.ydl_opts_video.copy()
-                        opts.pop('extractor_args', None)
-                        opts['user_agent'] = random.choice(user_agents)
-                        opts['http_headers']['User-Agent'] = opts['user_agent']
+
+                # حاول دائماً محاولة بديلة واحدة بإزالة extractor_args وتخفيف القيود
+                if attempt < max_retries - 1:
+                    logger.warning(f"⚠️ محاولة {attempt + 1}/{max_retries}: خطأ yt-dlp: {last_error} — محاولة بديلة بدون extractor_args...")
+                    import time
+                    time.sleep(2)
+                    # جرب بدون extractor_args وبخيارات أبسط
+                    opts = self.ydl_opts_video.copy()
+                    opts.pop('extractor_args', None)
+                    opts['user_agent'] = random.choice(user_agents)
+                    opts.setdefault('allow_unplayable_formats', True)
+                    opts.setdefault('ignore_no_formats_error', True)
+                    opts['http_headers']['User-Agent'] = opts['user_agent']
+                    try:
+                        with yt_dlp.YoutubeDL(opts) as ydl:
+                            info = ydl.extract_info(url, download=True)
+                            filename = ydl.prepare_filename(info)
+                            if not filename.endswith('.mp4'):
+                                base = os.path.splitext(filename)[0]
+                                new_filename = f"{base}.mp4"
+                                if os.path.exists(new_filename):
+                                    filename = new_filename
+                            return filename, info.get('title', 'فيديو')
+                    except Exception:
+                        # دع الحلقة الرئيسية تتابع المحاولات العادية
                         continue
-                    else:
-                        raise Exception("❌ YouTube يطلب المصادقة. الرجاء المحاولة لاحقاً أو استخدام رابط مختلف.")
-                else:
-                    raise Exception(f"خطأ في تحميل الفيديو: {str(e)}")
+                # إذا لم تنجح البدائل، أعد الخطأ الأصلي بصيغة مفهومة
+                if 'sign in' in error_msg or 'authentication' in error_msg or 'cookies' in error_msg or 'private' in error_msg:
+                    raise Exception("❌ YouTube يطلب المصادقة. الرجاء المحاولة لاحقاً أو استخدام رابط مختلف.")
+                raise Exception(f"خطأ في تحميل الفيديو: {str(e)}")
                     
             except Exception as e:
                 last_error = str(e)
@@ -579,23 +592,47 @@ class SocialMediaDownloader:
             except yt_dlp.utils.DownloadError as e:
                 last_error = str(e)
                 error_msg = last_error.lower()
-                
-                # إذا كان الخطأ متعلق بالبوت، جرب طريقة بديلة
-                if 'bot' in error_msg or 'sign in' in error_msg or 'cookies' in error_msg:
-                    if attempt < max_retries - 1:
-                        logger.warning(f"⚠️ محاولة {attempt + 1}/{max_retries}: خطأ في المصادقة، جاري المحاولة بطريقة بديلة...")
-                        import time
-                        time.sleep(2)
-                        # جرب بدون extractor_args
-                        opts = self.ydl_opts_audio.copy()
-                        opts.pop('extractor_args', None)
-                        opts['user_agent'] = random.choice(user_agents)
-                        opts['http_headers']['User-Agent'] = opts['user_agent']
+
+                # حاول دائماً محاولة بديلة واحدة بإزالة extractor_args وتخفيف القيود
+                if attempt < max_retries - 1:
+                    logger.warning(f"⚠️ محاولة {attempt + 1}/{max_retries}: خطأ yt-dlp: {last_error} — محاولة بديلة بدون extractor_args...")
+                    import time
+                    time.sleep(2)
+                    opts = self.ydl_opts_audio.copy()
+                    opts.pop('extractor_args', None)
+                    opts['user_agent'] = random.choice(user_agents)
+                    opts.setdefault('allow_unplayable_formats', True)
+                    opts.setdefault('ignore_no_formats_error', True)
+                    opts['http_headers']['User-Agent'] = opts['user_agent']
+                    try:
+                        with yt_dlp.YoutubeDL(opts) as ydl:
+                            info = ydl.extract_info(url, download=True)
+                            filename = ydl.prepare_filename(info)
+                            if FFMPEG_PATH:
+                                audio_filename = filename.rsplit('.', 1)[0] + '.mp3'
+                                if not os.path.exists(audio_filename):
+                                    base = os.path.splitext(filename)[0]
+                                    for ext in ['.mp3', '.m4a', '.opus', '.webm']:
+                                        test_file = f"{base}{ext}"
+                                        if os.path.exists(test_file):
+                                            audio_filename = test_file
+                                            break
+                            else:
+                                audio_filename = filename
+                                if not os.path.exists(audio_filename):
+                                    base = os.path.splitext(filename)[0]
+                                    for ext in ['.m4a', '.webm', '.opus', '.mp3']:
+                                        test_file = f"{base}{ext}"
+                                        if os.path.exists(test_file):
+                                            audio_filename = test_file
+                                            break
+                            return audio_filename, info.get('title', 'صوت')
+                    except Exception:
                         continue
-                    else:
-                        raise Exception("❌ YouTube يطلب المصادقة. الرجاء المحاولة لاحقاً أو استخدام رابط مختلف.")
-                else:
-                    raise Exception(f"خطأ في تحميل الصوت: {str(e)}")
+
+                if 'sign in' in error_msg or 'authentication' in error_msg or 'cookies' in error_msg or 'private' in error_msg:
+                    raise Exception("❌ YouTube يطلب المصادقة. الرجاء المحاولة لاحقاً أو استخدام رابط مختلف.")
+                raise Exception(f"خطأ في تحميل الصوت: {str(e)}")
                     
             except Exception as e:
                 last_error = str(e)
@@ -645,16 +682,31 @@ class SocialMediaDownloader:
             
             with yt_dlp.YoutubeDL(opts) as ydl:
                 info = ydl.extract_info(url, download=False)
-                
+
                 if not info:
                     raise Exception("لم يتم العثور على معلومات")
-                
+
                 return info
-                
+
         except yt_dlp.utils.DownloadError as e:
             logger.error(f"خطأ yt-dlp: {e}")
+            # محاولة بديلة بدون extractor_args
+            try:
+                opts_alt = opts.copy()
+                opts_alt.pop('extractor_args', None)
+                opts_alt.setdefault('allow_unplayable_formats', True)
+                opts_alt.setdefault('ignore_no_formats_error', True)
+                if os.path.exists(os.getenv('YOUTUBE_COOKIES_FILE', 'cookies.txt')):
+                    opts_alt['cookiefile'] = os.getenv('YOUTUBE_COOKIES_FILE', 'cookies.txt')
+                with yt_dlp.YoutubeDL(opts_alt) as ydl:
+                    info = ydl.extract_info(url, download=False)
+                    if info:
+                        return info
+            except Exception as e2:
+                logger.error(f"محاولة بديلة فشلت في get_info: {e2}")
+
             error_msg = str(e).lower()
-            if 'bot' in error_msg or 'sign in' in error_msg:
+            if 'sign in' in error_msg or 'bot' in error_msg or 'authentication' in error_msg:
                 raise Exception("❌ YouTube يطلب المصادقة. الرجاء المحاولة لاحقاً.")
             raise Exception("لا يمكن الوصول إلى هذا المحتوى")
         except Exception as e:
@@ -697,10 +749,10 @@ class SocialMediaDownloader:
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 search_query = f"ytsearch{max_results}:{query}"
                 result = ydl.extract_info(search_query, download=False)
-                
+
                 if not result or 'entries' not in result:
                     raise Exception("لم يتم العثور على نتائج")
-                
+
                 videos = []
                 for entry in result['entries']:
                     if entry:
@@ -711,14 +763,40 @@ class SocialMediaDownloader:
                             'duration': entry.get('duration', 0),
                             'channel': entry.get('uploader', entry.get('channel', 'Unknown'))
                         })
-                
+
                 logger.info(f"تم العثور على {len(videos)} نتيجة")
                 return videos
-                
+
         except Exception as e:
             logger.error(f"خطأ في البحث: {e}")
+            # محاولة بديلة بدون extractor_args
+            try:
+                ydl_opts_alt = ydl_opts.copy()
+                ydl_opts_alt.pop('extractor_args', None)
+                ydl_opts_alt.setdefault('allow_unplayable_formats', True)
+                ydl_opts_alt.setdefault('ignore_no_formats_error', True)
+                if os.path.exists(os.getenv('YOUTUBE_COOKIES_FILE', 'cookies.txt')):
+                    ydl_opts_alt['cookiefile'] = os.getenv('YOUTUBE_COOKIES_FILE', 'cookies.txt')
+                with yt_dlp.YoutubeDL(ydl_opts_alt) as ydl:
+                    search_query = f"ytsearch{max_results}:{query}"
+                    result = ydl.extract_info(search_query, download=False)
+                    if result and 'entries' in result:
+                        videos = []
+                        for entry in result['entries']:
+                            if entry:
+                                videos.append({
+                                    'id': entry.get('id'),
+                                    'title': entry.get('title'),
+                                    'url': f"https://www.youtube.com/watch?v={entry.get('id')}",
+                                    'duration': entry.get('duration', 0),
+                                    'channel': entry.get('uploader', entry.get('channel', 'Unknown'))
+                                })
+                        return videos
+            except Exception as e2:
+                logger.error(f"محاولة بديلة فشلت في search_youtube: {e2}")
+
             error_msg = str(e).lower()
-            if 'bot' in error_msg or 'sign in' in error_msg:
+            if 'bot' in error_msg or 'sign in' in error_msg or 'authentication' in error_msg:
                 raise Exception("❌ YouTube يطلب المصادقة. الرجاء المحاولة لاحقاً.")
             raise Exception(f"فشل البحث: {str(e)}")
 
