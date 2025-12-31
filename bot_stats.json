@@ -5,8 +5,8 @@
       "name": "𝓢𝓸𝓾𝓵 𝓸𝓯 𝓝𝓪𝓽𝓾𝓻𝓮",
       "username": "lunix_313",
       "first_seen": "2025-12-03T03:34:46.806507",
-      "last_seen": "2025-12-28T16:34:07.466940",
-      "usage_count": 22
+      "last_seen": "2025-12-31T06:41:58.689259",
+      "usage_count": 34
     },
     "5144999281": {
       "name": "Hussein Mohammed",
@@ -23,14 +23,14 @@
       "usage_count": 2
     }
   },
-  "total_downloads": 11,
+  "total_downloads": 12,
   "downloads_by_type": {
     "image": 0,
     "video": 6,
     "audio": 2,
-    "search": 3
+    "search": 4
   },
-  "total_searches": 7,
-  "failed_downloads": 8,
+  "total_searches": 8,
+  "failed_downloads": 16,
   "start_date": "2025-12-03T03:34:28.935831"
 }

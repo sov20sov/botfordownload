@@ -4,6 +4,9 @@ python-telegram-bot==20.7
 # Downloader (YouTube / Instagram / TikTok)
 yt-dlp>=2024.12.30
 
+# Instagram Stories
+instaloader>=4.9.0
+
 # HTTP requests
 requests>=2.31.0
 
@@ -12,6 +15,10 @@ python-dotenv>=1.0.0
 
 # Images
 Pillow>=10.0.0
+
+# Web scraping
+beautifulsoup4>=4.12.0
+lxml>=4.9.0
 
 # Scheduling (إذا كنت تستخدم APScheduler فعلاً)
 APScheduler>=3.10.4
