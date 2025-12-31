@@ -254,6 +254,50 @@ class SocialMediaDownloader:
             'ignoreerrors': False,
             'no_color': True,
         }
+        # تسجيل إصدار yt-dlp
+        try:
+            logger.info(f"✅ yt-dlp version: {yt_dlp.__version__}")
+        except Exception:
+            logger.warning("⚠️ لم يتم التعرف على إصدار yt-dlp")
+
+        # Logger class for yt-dlp (debugging)
+        class YTDLLogger:
+            def __init__(self, path=None):
+                self.path = path or os.path.join(DOWNLOAD_FOLDER, 'yt_dlp_debug.log')
+
+            def debug(self, msg):
+                try:
+                    with open(self.path, 'a', encoding='utf-8') as f:
+                        f.write(f"DEBUG: {msg}\n")
+                except Exception:
+                    pass
+
+            def info(self, msg):
+                try:
+                    with open(self.path, 'a', encoding='utf-8') as f:
+                        f.write(f"INFO: {msg}\n")
+                except Exception:
+                    pass
+
+            def warning(self, msg):
+                try:
+                    with open(self.path, 'a', encoding='utf-8') as f:
+                        f.write(f"WARNING: {msg}\n")
+                except Exception:
+                    pass
+
+            def error(self, msg):
+                try:
+                    with open(self.path, 'a', encoding='utf-8') as f:
+                        f.write(f"ERROR: {msg}\n")
+                except Exception:
+                    pass
+
+        # If debugging enabled via env, attach logger and make yt-dlp verbose
+        if os.getenv('DEBUG_YTDLP', '0') == '1':
+            base_opts['quiet'] = False
+            base_opts['no_warnings'] = False
+            base_opts['logger'] = YTDLLogger()
         
         # محاولة تحميل ملف cookies إذا كان موجوداً
         cookies_file = os.getenv('YOUTUBE_COOKIES_FILE', 'cookies.txt')
@@ -296,6 +340,17 @@ class SocialMediaDownloader:
                 'format': 'bestaudio[ext=m4a]/bestaudio/best',
                 'outtmpl': f'{DOWNLOAD_FOLDER}/%(title)s.%(ext)s',
             }
+
+    def _write_debug(self, context_name, exc):
+        try:
+            import traceback
+            path = os.path.join(DOWNLOAD_FOLDER, 'yt_dlp_debug.log')
+            with open(path, 'a', encoding='utf-8') as f:
+                f.write(f"\n--- {datetime.now().isoformat()} - {context_name} ---\n")
+                f.write(f"Exception: {repr(exc)}\n")
+                traceback.print_exc(file=f)
+        except Exception:
+            pass
     
     def download_image(self, url):
         """تحميل صورة من الرابط - مع طرق متعددة"""
@@ -463,6 +518,7 @@ class SocialMediaDownloader:
                     return filename, f"قصة {username} (صورة)"
                     
         except yt_dlp.utils.DownloadError as e:
+            self._write_debug('download_instagram_story', e)
             error_msg = str(e).lower()
             if 'private' in error_msg or 'not available' in error_msg:
                 raise Exception("❌ القصة غير متاحة أو خاصة. تأكد من أن القصة عامة.")
@@ -500,6 +556,7 @@ class SocialMediaDownloader:
                     return filename, info.get('title', 'فيديو')
                     
             except yt_dlp.utils.DownloadError as e:
+                self._write_debug('download_video', e)
                 last_error = str(e)
                 error_msg = last_error.lower()
 
@@ -590,6 +647,7 @@ class SocialMediaDownloader:
                     return audio_filename, info.get('title', 'صوت')
                     
             except yt_dlp.utils.DownloadError as e:
+                self._write_debug('download_audio', e)
                 last_error = str(e)
                 error_msg = last_error.lower()
 
@@ -689,6 +747,7 @@ class SocialMediaDownloader:
                 return info
 
         except yt_dlp.utils.DownloadError as e:
+            self._write_debug('get_info', e)
             logger.error(f"خطأ yt-dlp: {e}")
             # محاولة بديلة بدون extractor_args
             try:
@@ -768,6 +827,7 @@ class SocialMediaDownloader:
                 return videos
 
         except Exception as e:
+            self._write_debug('search_youtube', e)
             logger.error(f"خطأ في البحث: {e}")
             # محاولة بديلة بدون extractor_args
             try:
