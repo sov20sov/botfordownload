@@ -5,32 +5,79 @@
       "name": "𝓢𝓸𝓾𝓵 𝓸𝓯 𝓝𝓪𝓽𝓾𝓻𝓮",
       "username": "lunix_313",
       "first_seen": "2025-12-03T03:34:46.806507",
-      "last_seen": "2025-12-31T06:41:58.689259",
-      "usage_count": 34
+      "last_seen": "2026-01-20T21:21:25.559050",
+      "usage_count": 49,
+      "is_active": true,
+      "join_date": "2026-01-20",
+      "download_count": 1,
+      "search_count": 0,
+      "failed_count": 0
     },
     "5144999281": {
       "name": "Hussein Mohammed",
       "username": "husTh1",
       "first_seen": "2025-12-03T03:35:07.545296",
-      "last_seen": "2025-12-29T23:34:42.921843",
-      "usage_count": 9
+      "last_seen": "2026-01-20T21:40:32.336878",
+      "usage_count": 39,
+      "is_active": true,
+      "join_date": "2026-01-20",
+      "download_count": 5,
+      "search_count": 0,
+      "failed_count": 0
     },
     "5973476206": {
       "name": "مجتبى⚡️",
       "username": "lo9sr",
       "first_seen": "2025-12-10T14:51:06.032668",
       "last_seen": "2025-12-10T14:53:08.588908",
-      "usage_count": 2
+      "usage_count": 2,
+      "join_date": "2026-01-20",
+      "download_count": 0,
+      "search_count": 0,
+      "failed_count": 0,
+      "is_active": false
     }
   },
-  "total_downloads": 12,
+  "total_downloads": 28,
   "downloads_by_type": {
     "image": 0,
-    "video": 6,
-    "audio": 2,
-    "search": 4
+    "video": 14,
+    "audio": 4,
+    "search": 9
   },
-  "total_searches": 8,
-  "failed_downloads": 16,
-  "start_date": "2025-12-03T03:34:28.935831"
+  "total_searches": 14,
+  "failed_downloads": 24,
+  "start_date": "2025-12-03T03:34:28.935831",
+  "active_users_today": 2,
+  "daily_stats": {
+    "2026-01-20": {
+      "downloads": 7,
+      "searches": 5,
+      "new_users": 0,
+      "active_users": 2,
+      "failed": 7,
+      "active_user_ids": [
+        "5144999281",
+        "8032588795"
+      ]
+    }
+  },
+  "premium_features": [],
+  "bot_version": "2.5",
+  "active_users_week": 2,
+  "active_users_month": 2,
+  "last_update": "2026-01-20T21:40:32.336878",
+  "successful_downloads": 12,
+  "search_terms": {},
+  "daily_stats_version": 2,
+  "platforms": {
+    "youtube": 2,
+    "instagram": 4,
+    "tiktok": 0,
+    "twitter": 0,
+    "facebook": 0,
+    "other": 0
+  },
+  "total_errors": 7,
+  "average_download_time": 0
 }
